@@ -1,0 +1,683 @@
+<!DOCTYPE html><script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Moja Todo Lista",
+  "schemaVersion": 1,
+  "description": "Tedenski pregled ToDo liste: vsak dan je vrstica z dvema kolonama (Delo levo, Privat desno). Opravila razvrščena po prioriteti, z dodajanjem in prenosom nedokončanih v naslednji dan. Sinhronizira se z eno datoteko to-do.md (isto datoteko bere jutranji digest)."
+}
+</script>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moja ToDo lista</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f7f7f5; color: #2b2b2b; margin: 0; padding: 16px;
+}
+.wrap { max-width: 1000px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 12px; }
+.weekbar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #fff; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.weekbar button {
+  border: none; background: #efeff0; border-radius: 8px; padding: 6px 12px;
+  cursor: pointer; font-size: 14px; color: #444;
+}
+.weekbar .range { font-weight: 600; font-size: 15px; text-align:center; }
+.weekbar .this-link { font-size: 12px; color: #6c8ef5; cursor: pointer; display:block; text-align:center; }
+
+.colhead { display: grid; grid-template-columns: 92px minmax(0,1fr) minmax(0,1fr); gap: 8px; margin-bottom: 6px; }
+.colhead div { font-weight: 700; font-size: 13px; padding: 4px 8px; border-radius: 8px; text-align:center; }
+.colhead .h-delo { background: #fbe7cd; color: #9a5a00; }
+.colhead .h-privat { background: #dde6fb; color: #324c9a; }
+
+.day { display: grid; grid-template-columns: 92px minmax(0,1fr) minmax(0,1fr); gap: 8px; margin-bottom: 8px; }
+.daylabel {
+  background: #fff; border-radius: 10px; padding: 8px; text-align: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); font-size: 12px;
+}
+.daylabel .dn { font-weight: 700; text-transform: capitalize; }
+.daylabel .dd { color: #999; font-size: 12px; }
+.day.today .daylabel { outline: 2px solid #6c8ef5; }
+.longhead { margin-top: 20px; }
+.day.longrow .daylabel { background:#f1efe9; color:#6b6256; }
+.day.longrow .cell { background:#fcfbf8; }
+.cell {
+  background: #fff; border-radius: 10px; padding: 8px; min-height: 60px; min-width: 0;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.task {
+  display: flex; align-items: center; gap: 6px; padding: 4px 4px; border-radius: 6px;
+}
+.task:hover { background: #f6f6f4; }
+.task .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.h { background: #e2483d; } .dot.m { background: #e0922f; } .dot.l { background: #4caf50; }
+.task input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; flex:none; }
+.task .txt { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
+.task.done .txt { text-decoration: line-through; color: #bbb; }
+.task .txt a.tlink { color:#2c6ed5; text-decoration: underline; word-break: break-all; }
+.task .txt a.tlink:hover { color:#1b4fa0; }
+.task .del { border: none; background: none; color: #d2d2d2; cursor: pointer; font-size: 15px; flex:none; }
+.task .del:hover { color: #e2483d; }
+.addmini { display: flex; gap: 4px; margin-top: 6px; }
+.addmini input { flex: 1; min-width: 0; padding: 5px 6px; border: 1px solid #e2e2e2; border-radius: 6px; font-size: 12px; }
+.addmini select { padding: 5px; border: 1px solid #e2e2e2; border-radius: 6px; font-size: 12px; }
+.addmini button { border: none; background: #2b2b2b; color: #fff; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 13px; }
+.carry { border:none; background:none; color:#bbb; cursor:pointer; font-size:11px; margin-top:4px; padding:2px; }
+.carry:hover { color:#6c8ef5; }
+/* dogodki iz koledarja */
+.evs { margin-bottom:4px; }
+.ev { display:flex; align-items:center; gap:6px; padding:3px 5px; font-size:12px; background:#eef3ff; border-left:3px solid #6c8ef5; border-radius:4px; margin-bottom:3px; }
+.ev .evtime { font-weight:700; color:#324c9a; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ev .evtitle { flex:1; color:#33415c; }
+.ev .evx { border:none; background:none; color:#c3cbe0; cursor:pointer; font-size:14px; line-height:1; }
+.ev .evx:hover { color:#e2483d; }
+.legend { font-size: 12px; color: #888; margin-top: 12px; }
+.legend .dot { display:inline-block; width:8px;height:8px;border-radius:50%;margin:0 3px 0 10px; }
+.task[draggable] { cursor: grab; }
+.task.dragging { opacity: .4; }
+.cell.dragover { outline: 2px dashed #6c8ef5; outline-offset: -2px; background:#f0f4ff; }
+.printbtn { border:none; background:#6c8ef5; color:#fff; border-radius:8px; padding:6px 14px; cursor:pointer; font-size:14px; }
+.digestbtn { border:none; background:#2b2b2b; color:#fff; border-radius:8px; padding:6px 14px; cursor:pointer; font-size:14px; }
+/* sinhronizacijska vrstica */
+.syncbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:13px; }
+.syncbar .pill { display:inline-flex; align-items:center; gap:6px; background:#fff; border:1px solid #e3e3e0; border-radius:20px; padding:5px 12px; cursor:pointer; }
+.syncbar .pill:hover { border-color:#6c8ef5; }
+.syncbar .sdot { width:9px; height:9px; border-radius:50%; background:#c9c9c9; }
+.syncbar.connected #connectPill .sdot { background:#4caf50; }
+.syncbar.gh-connected #ghDot { background:#4caf50; }
+.syncbar .smsg { color:#999; }
+.gh-modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:60; overflow:auto; }
+.gh-modal { background:#fff; border-radius:14px; max-width:460px; width:100%; padding:22px 24px; box-shadow:0 8px 30px rgba(0,0,0,.2); }
+.gh-modal h2 { font-size:17px; margin:0 0 4px; }
+.gh-modal p.sub { color:#888; font-size:12px; margin:0 0 14px; }
+.gh-modal label { display:block; font-size:12px; color:#555; margin:10px 0 3px; font-weight:600; }
+.gh-modal input { width:100%; padding:8px 10px; border:1px solid #ddd; border-radius:8px; font-size:13px; }
+.gh-modal .ghrow { display:flex; gap:8px; }
+.gh-modal .ghrow > div { flex:1; }
+.gh-modal .ghactions { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+.gh-modal .ghactions button { border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-size:14px; }
+.gh-modal .ghactions .primary { background:#6c8ef5; color:#fff; }
+.gh-modal .ghactions .danger { background:#fbe7e6; color:#c0392b; }
+.gh-modal .ghactions .secondary { background:#efeff0; color:#444; }
+.gh-modal .ghstat { font-size:12px; margin-top:10px; min-height:16px; }
+.digest-overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:50; overflow:auto; }
+.digest-card { background:#fff; border-radius:14px; max-width:560px; width:100%; padding:22px 24px; box-shadow:0 8px 30px rgba(0,0,0,.2); }
+.digest-card h2 { font-size:18px; margin:0 0 4px; }
+.digest-card .dsub { color:#888; font-size:13px; margin-bottom:16px; }
+.digest-sec { margin-bottom:16px; }
+.digest-sec h3 { font-size:14px; margin:0 0 8px; display:flex; align-items:center; gap:6px; }
+.digest-sec ul { list-style:none; margin:0; padding:0; }
+.digest-sec li { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:14px; }
+.digest-sec li .dot { width:8px;height:8px;border-radius:50%;flex:none; }
+.digest-empty { color:#aaa; font-size:13px; font-style:italic; }
+.digest-summary { background:#f3f5fb; border-radius:10px; padding:10px 12px; font-size:13px; color:#324c9a; }
+.digest-actions { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+.digest-actions button, .digest-actions a { border:none; border-radius:8px; padding:7px 14px; cursor:pointer; font-size:14px; text-decoration:none; display:inline-block; }
+.digest-actions .primary { background:#6c8ef5; color:#fff; }
+.digest-actions .secondary { background:#efeff0; color:#444; }
+@media print {
+  .digestbtn, .digest-overlay, .syncbar, .gh-modal-bg { display:none !important; }
+  body.print-digest > .wrap { display:none !important; }
+  body.print-digest .digest-overlay { display:flex !important; position:static; background:#fff; padding:0; }
+  body.print-digest .digest-card { box-shadow:none; max-width:none; }
+  body.print-digest .digest-actions { display:none !important; }
+}
+@media (max-width: 640px){
+  .day,.colhead{ grid-template-columns: 60px 1fr 1fr; }
+  .task .txt,.addmini input{ font-size:12px; }
+}
+@media print {
+  body { background:#fff; padding:0; }
+  .weekbar button, .this-link, .addmini, .carry, .del, .task input[type=checkbox], .printbtn { display:none !important; }
+  .legend { margin-top:8px; }
+  .cell, .daylabel { box-shadow:none; border:1px solid #ddd; }
+  .day { page-break-inside: avoid; }
+  .day.otherweek { display:none !important; }
+  h1 { font-size:16px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📋 Moja ToDo lista — tedenski pregled</h1>
+  <div class="syncbar" id="syncbar">
+    <span class="pill" id="ghPill"><span class="sdot" id="ghDot"></span><span id="ghLabel">☁︎ GitHub sync</span></span>
+    <span class="pill" id="connectPill"><span class="sdot"></span><span id="connectLabel">🔗 Lokalna datoteka</span></span>
+    <span class="smsg" id="syncMsg">ni povezano — spremembe se hranijo samo v brskalniku</span>
+    <input type="file" id="importInput" accept=".md,text/markdown" style="display:none">
+  </div>
+  <div class="weekbar">
+    <button id="prev">‹ Prejšnji teden</button>
+    <div>
+      <div class="range" id="rangeLabel"></div>
+      <span class="this-link" id="thisLink">ta teden</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="next">Naslednji teden ›</button>
+      <button class="digestbtn" id="digestBtn">📊 Današnji pregled</button>
+      <button class="printbtn" id="printBtn">🖨 Natisni</button>
+    </div>
+  </div>
+  <div class="colhead">
+    <div></div>
+    <div class="h-delo">💼 Delo</div>
+    <div class="h-privat">🏠 Privat</div>
+  </div>
+  <div id="grid"></div>
+  <div class="colhead longhead">
+    <div></div>
+    <div class="h-delo">💼 Dolgoročno službeno</div>
+    <div class="h-privat">🏠 Dolgoročno privat</div>
+  </div>
+  <div id="longgrid"></div>
+  <div class="legend">Prioriteta:
+    <span class="dot h"></span>visoka
+    <span class="dot m"></span>srednja
+    <span class="dot l"></span>nizka
+  </div>
+</div>
+
+<script>
+const STORE = "todo_app_v1";
+const EVSTORE = "todo_events_v1";
+let data = JSON.parse(localStorage.getItem(STORE) || "{}");
+let events = JSON.parse(localStorage.getItem(EVSTORE) || "{}"); // { "YYYY-MM-DD": [ {id,time,title} ] }
+let weekStart = startOfWeek(new Date());
+
+const prioOrder = {h:0,m:1,l:2};
+const fmtKey = d => { const p=n=>String(n).padStart(2,"0"); return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate()); };
+const dayNames = ["pon","tor","sre","čet","pet","sob","ned"];
+
+function startOfWeek(d){ const x=new Date(d); const wd=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-wd); return x; }
+
+// Prikaže besedilo opravila in URL-je pretvori v aktivne povezave (odpre v privzetem brskalniku).
+function linkify(el,text){
+  el.textContent="";
+  const re=/(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+  let last=0, m, found=false;
+  while((m=re.exec(text))){
+    found=true;
+    if(m.index>last) el.appendChild(document.createTextNode(text.slice(last,m.index)));
+    let raw=m[0];
+    // odstrani morebitna končna ločila iz povezave
+    const trail=(raw.match(/[).,;:!?]+$/)||[""])[0];
+    if(trail) raw=raw.slice(0,raw.length-trail.length);
+    const href=raw.startsWith("http")?raw:"https://"+raw;
+    const a=document.createElement("a"); a.href=href; a.textContent=raw;
+    a.target="_blank"; a.rel="noopener noreferrer"; a.draggable=false; a.className="tlink";
+    a.addEventListener("click",e=>e.stopPropagation());
+    a.addEventListener("mousedown",e=>e.stopPropagation());
+    el.appendChild(a);
+    if(trail) el.appendChild(document.createTextNode(trail));
+    last=m.index+m[0].length;
+  }
+  if(last<text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  if(!found) el.textContent=text;
+}
+function dayArr(list,key){ data[list]=data[list]||{}; data[list][key]=data[list][key]||[]; return data[list][key]; }
+
+/* ---------- shranjevanje: localStorage + (če povezano) datoteka ---------- */
+function save(){ localStorage.setItem(STORE, JSON.stringify(data)); scheduleFileWrite(); scheduleGitWrite(); }
+function evSave(){ localStorage.setItem(EVSTORE, JSON.stringify(events)); scheduleFileWrite(); scheduleGitWrite(); }
+
+/* ====================================================================== */
+/*  SINHRONIZACIJA Z ENO DATOTEKO  to-do.md                               */
+/*  - človeku berljive sekcije (Delo/Privat) bere jutranji digest         */
+/*  - skrit blok <!-- TODO_APP_STATE ... --> hrani točno stanje aplikacije */
+/* ====================================================================== */
+const P2CODE={h:"V",m:"S",l:"N"};
+const CODE2P={V:"h",S:"m",N:"l"};
+
+function serializeMd(){
+  const today=fmtKey(new Date());
+  const head=
+"# Moja Todo Lista\n\n"+
+"> Kanonična datoteka. Jutranji digest ob 7:00 bere to datoteko.\n"+
+"> Prioriteta: (V) visoka / (S) srednja / (N) nizka. Opravljeno = [x].\n"+
+"> Datoteko samodejno posodablja ToDo aplikacija (index.html).\n"+
+"> Zadnja sprememba: "+today+"\n\n";
+  function section(title,list){
+    let out="## "+title+"\n\n";
+    const tasks=[];
+    const m=data[list]||{};
+    Object.keys(m).forEach(k=>m[k].forEach(t=>tasks.push({...t,day:k})));
+    tasks.sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio] || a.day.localeCompare(b.day));
+    if(!tasks.length) out+="_(ni opravil)_\n";
+    tasks.forEach(t=>{
+      const due=t.due?" ("+t.due+")":"";
+      out+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+due+"\n";
+    });
+    return out+"\n";
+  }
+  const human=head+section("💼 Delo (Work)","delo")+section("🏠 Privat (Personal)","privat");
+  const machine="<!-- TODO_APP_STATE\n"+JSON.stringify(data)+"\nTODO_APP_STATE -->\n";
+  const evblock="<!-- TODO_EVENTS\n"+JSON.stringify(events)+"\nTODO_EVENTS -->\n";
+  return human+machine+evblock;
+}
+
+function parseEvents(text){
+  const m=text.match(/<!--\s*TODO_EVENTS\s*([\s\S]*?)\s*TODO_EVENTS\s*-->/);
+  if(m){ try{ const o=JSON.parse(m[1].trim()); if(o&&typeof o==="object") return o; }catch(e){} }
+  return null;
+}
+
+function parseMd(text){
+  // 1) prefer strojni blok
+  const m=text.match(/<!--\s*TODO_APP_STATE\s*([\s\S]*?)\s*TODO_APP_STATE\s*-->/);
+  if(m){ try{ const obj=JSON.parse(m[1].trim()); if(obj&&typeof obj==="object") return obj; }catch(e){} }
+  // 2) fallback: razčleni človeške vrstice (vse na današnji dan)
+  const today=fmtKey(new Date());
+  const d={delo:{},privat:{}};
+  let cur=null;
+  text.split(/\r?\n/).forEach(line=>{
+    if(/##/.test(line)&&/Delo/i.test(line)) cur="delo";
+    else if(/##/.test(line)&&/Privat/i.test(line)) cur="privat";
+    else {
+      const mm=line.match(/^- \[([ xX])\]\s*\(([VSN])\)\s*(.+?)\s*(?:\((\d{4}-\d{2}-\d{2})\))?\s*$/);
+      if(mm&&cur){
+        d[cur][today]=d[cur][today]||[];
+        d[cur][today].push({id:Date.now()+Math.random(),txt:mm[3].trim(),prio:CODE2P[mm[2]],done:mm[1].toLowerCase()==="x",due:mm[4]||undefined});
+      }
+    }
+  });
+  return d;
+}
+
+/* ---- File System Access (Chrome/Edge namizje) z IndexedDB za trajni handle ---- */
+let fileHandle=null, writeTimer=null;
+const supportsFS = !!(window.showOpenFilePicker);
+
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open("todoSync",1); r.onupgradeneeded=()=>r.result.createObjectStore("kv"); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbSet(k,v){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction("kv","readwrite"); tx.objectStore("kv").put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
+async function idbGet(k){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction("kv","readonly"); const rq=tx.objectStore("kv").get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
+
+function setSync(connected,msg){
+  const bar=document.getElementById("syncbar");
+  bar.classList.toggle("connected",connected);
+  document.getElementById("syncMsg").textContent=msg;
+  document.getElementById("connectLabel").textContent= connected ? "✓ Povezano: to-do.md" : "🔗 Poveži datoteko to-do.md";
+}
+
+async function writeFileNow(){
+  if(!fileHandle) return;
+  try{
+    const w=await fileHandle.createWritable();
+    await w.write(serializeMd());
+    await w.close();
+    const t=new Date().toLocaleTimeString("sl-SI",{hour:"2-digit",minute:"2-digit"});
+    setSync(true,"shranjeno v to-do.md ob "+t);
+  }catch(e){ setSync(false,"napaka pri shranjevanju — klikni za ponovno povezavo"); }
+}
+function scheduleFileWrite(){ if(!fileHandle) return; clearTimeout(writeTimer); writeTimer=setTimeout(writeFileNow,400); }
+
+async function readFromFile(){
+  if(!fileHandle) return false;
+  try{
+    const f=await fileHandle.getFile();
+    const txt=await f.text();
+    if(txt.trim()){
+      data=parseMd(txt); localStorage.setItem(STORE,JSON.stringify(data));
+      const ev=parseEvents(txt); if(ev){ events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events)); }
+    }
+    return true;
+  }catch(e){ return false; }
+}
+
+async function connectFile(){
+  if(!supportsFS){
+    // Safari / peskovnik: ponudi uvoz/izvoz
+    if(confirm("Tvoj brskalnik ne podpira neposredne povezave.\n\nOK = uvozi to-do.md  ·  Prekliči = prenesi to-do.md")){
+      document.getElementById("importInput").click();
+    } else { downloadMd(); }
+    return;
+  }
+  try{
+    const [h]=await window.showOpenFilePicker({
+      types:[{description:"Markdown",accept:{"text/markdown":[".md"]}}],
+      multiple:false
+    });
+    fileHandle=h; await idbSet("handle",h);
+    const f=await h.getFile(); const txt=(await f.text()).trim();
+    if(txt && /TODO_APP_STATE|## .*Delo|## .*Privat/.test(txt)){
+      if(confirm("Naložim opravila iz to-do.md v aplikacijo?\n(Prekliči = ohrani trenutna in jih zapiši v datoteko)")){
+        await readFromFile();
+      } else { await writeFileNow(); }
+    } else { await writeFileNow(); }
+    setSync(true,"povezano");
+    render();
+  }catch(e){ /* uporabnik preklical */ }
+}
+
+function downloadMd(){
+  const blob=new Blob([serializeMd()],{type:"text/markdown"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="to-do.md"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+async function restoreHandle(){
+  if(!supportsFS) { setSync(false,"povezava ni podprta v tem brskalniku — uporabi uvoz/izvoz"); return; }
+  try{
+    const h=await idbGet("handle");
+    if(!h) return;
+    const perm=await h.queryPermission({mode:"readwrite"});
+    if(perm==="granted"){ fileHandle=h; await readFromFile(); setSync(true,"povezano"); render(); }
+    else { setSync(false,"klikni za ponovno povezavo to-do.md"); }
+  }catch(e){}
+}
+
+document.getElementById("connectPill").onclick=connectFile;
+document.getElementById("importInput").addEventListener("change",function(){
+  const file=this.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=()=>{ data=parseMd(r.result); localStorage.setItem(STORE,JSON.stringify(data)); const ev=parseEvents(r.result); if(ev){events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events));} render(); setSync(false,"uvoženo iz datoteke (za samodejno shranjevanje uporabi povezavo)"); };
+  r.readAsText(file);
+});
+
+/* ====================================================================== */
+/*  GITHUB SYNC  (zasebna shramba z to-do.md prek Contents API + PAT)      */
+/* ====================================================================== */
+const GH_CFG="todo_gh_cfg_v1";
+let gh = JSON.parse(localStorage.getItem(GH_CFG) || "null"); // {owner,repo,branch,path,token}
+let ghSha=null, ghTimer=null, ghBusy=false;
+function ghConfigured(){ return !!(gh && gh.owner && gh.repo && gh.token); }
+function nowTime(){ return new Date().toLocaleTimeString("sl-SI",{hour:"2-digit",minute:"2-digit"}); }
+function ghStatus(connected,msg){
+  document.getElementById("syncbar").classList.toggle("gh-connected",connected);
+  document.getElementById("ghLabel").textContent = connected ? "✓ GitHub povezan" : "☁︎ GitHub sync";
+  if(msg) document.getElementById("syncMsg").textContent=msg;
+}
+function b64encode(str){ const bytes=new TextEncoder().encode(str); let bin=""; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
+function b64decode(b64){ const bin=atob((b64||"").replace(/\s/g,"")); const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0)); return new TextDecoder().decode(bytes); }
+function ghUrl(){ const p=(gh.path||"to-do.md").split("/").map(encodeURIComponent).join("/"); return `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/${p}`; }
+function ghHeaders(){ return {Authorization:"Bearer "+gh.token, Accept:"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28"}; }
+async function ghGet(){
+  const res=await fetch(ghUrl()+"?ref="+(gh.branch||"main"),{headers:ghHeaders()});
+  return res;
+}
+async function ghLoad(){
+  const res=await ghGet();
+  if(res.status===200){
+    const j=await res.json(); ghSha=j.sha; const txt=b64decode(j.content);
+    if(txt.trim()){
+      data=parseMd(txt); localStorage.setItem(STORE,JSON.stringify(data));
+      const ev=parseEvents(txt); if(ev){ events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events)); }
+    }
+    return {ok:true, empty:!txt.trim()};
+  }
+  if(res.status===404){ ghSha=null; return {ok:true, empty:true, missing:true}; }
+  return {ok:false, status:res.status};
+}
+async function ghPush(){
+  if(!ghConfigured()||ghBusy) return; ghBusy=true;
+  try{
+    const body={message:"todo update "+new Date().toISOString(), content:b64encode(serializeMd()), branch:(gh.branch||"main")};
+    if(ghSha) body.sha=ghSha;
+    let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body)});
+    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body)}); } }
+    if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
+    else { ghStatus(true,"napaka pri shranjevanju na GitHub ("+res.status+")"); }
+  }catch(e){ ghStatus(true,"GitHub ni dosegljiv (preveri povezavo)"); }
+  finally{ ghBusy=false; }
+}
+function scheduleGitWrite(){ if(!ghConfigured()) return; clearTimeout(ghTimer); ghTimer=setTimeout(ghPush,800); }
+
+function openGhModal(){
+  const bg=document.createElement("div"); bg.className="gh-modal-bg";
+  bg.addEventListener("click",e=>{ if(e.target===bg) bg.remove(); });
+  const g=gh||{};
+  bg.innerHTML=`<div class="gh-modal">
+    <h2>GitHub sinhronizacija</h2>
+    <p class="sub">Povezava na zasebno shrambo z datoteko to-do.md. Žeton se shrani samo v tej napravi.</p>
+    <label>Uporabniško ime (owner)</label><input id="gh_owner" placeholder="npr. perhavec" value="${(g.owner||"").replace(/"/g,'&quot;')}">
+    <div class="ghrow">
+      <div><label>Repozitorij (zasebni)</label><input id="gh_repo" placeholder="moja-todo-data" value="${(g.repo||"moja-todo-data").replace(/"/g,'&quot;')}"></div>
+      <div><label>Veja</label><input id="gh_branch" placeholder="main" value="${(g.branch||"main").replace(/"/g,'&quot;')}"></div>
+    </div>
+    <label>Pot do datoteke</label><input id="gh_path" placeholder="to-do.md" value="${(g.path||"to-do.md").replace(/"/g,'&quot;')}">
+    <label>Osebni žeton (PAT)</label><input id="gh_token" type="password" placeholder="github_pat_…" value="${(g.token||"").replace(/"/g,'&quot;')}">
+    <div class="ghstat" id="gh_stat"></div>
+    <div class="ghactions">
+      <button class="primary" id="gh_save">Poveži in sinhroniziraj</button>
+      ${ghConfigured()?'<button class="danger" id="gh_clear">Odklopi</button>':''}
+      <button class="secondary" id="gh_close">Zapri</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  bg.querySelector("#gh_close").onclick=()=>bg.remove();
+  const cl=bg.querySelector("#gh_clear"); if(cl) cl.onclick=()=>{ gh=null; localStorage.removeItem(GH_CFG); ghSha=null; ghStatus(false,"GitHub odklopljen"); bg.remove(); };
+  bg.querySelector("#gh_save").onclick=async()=>{
+    const stat=bg.querySelector("#gh_stat"); stat.style.color="#888"; stat.textContent="Povezujem…";
+    gh={ owner:bg.querySelector("#gh_owner").value.trim(), repo:bg.querySelector("#gh_repo").value.trim(),
+         branch:bg.querySelector("#gh_branch").value.trim()||"main", path:bg.querySelector("#gh_path").value.trim()||"to-do.md",
+         token:bg.querySelector("#gh_token").value.trim() };
+    if(!ghConfigured()){ stat.style.color="#c0392b"; stat.textContent="Izpolni owner, repo in žeton."; return; }
+    const r=await ghLoad();
+    if(!r.ok){ stat.style.color="#c0392b"; stat.textContent="Napaka "+r.status+" — preveri owner/repo/žeton in dovoljenja."; return; }
+    localStorage.setItem(GH_CFG,JSON.stringify(gh));
+    if(r.missing || r.empty){ await ghPush(); stat.textContent="Povezano. Datoteka ustvarjena/posodobljena na GitHub."; }
+    else { stat.textContent="Povezano in naloženo z GitHub."; }
+    stat.style.color="#2e7d32";
+    ghStatus(true,"povezano z GitHub");
+    render();
+    setTimeout(()=>bg.remove(),900);
+  };
+}
+document.getElementById("ghPill").onclick=openGhModal;
+
+/* ====================================================================== */
+/*  VIZUALNI PREGLED (nespremenjen)                                        */
+/* ====================================================================== */
+function moveTask(srcList,srcKey,id,dstList,dstKey){
+  const src=dayArr(srcList,srcKey); const idx=src.findIndex(t=>t.id===id);
+  if(idx<0) return; const [t]=src.splice(idx,1);
+  dayArr(dstList,dstKey).push(t); save(); render();
+}
+
+function cellEl(list,key){
+  const cell=document.createElement("div"); cell.className="cell";
+  cell.dataset.list=list; cell.dataset.key=key;
+  cell.addEventListener("dragover",e=>{e.preventDefault(); cell.classList.add("dragover");});
+  cell.addEventListener("dragleave",()=>cell.classList.remove("dragover"));
+  cell.addEventListener("drop",e=>{
+    e.preventDefault(); cell.classList.remove("dragover");
+    const d=JSON.parse(e.dataTransfer.getData("text/plain")||"{}");
+    if(d.id!=null) moveTask(d.list,d.key,d.id,list,key);
+  });
+  const arr=dayArr(list,key).slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio] || a.done-b.done);
+  arr.forEach(t=>{
+    const row=document.createElement("div"); row.className="task"+(t.done?" done":"");
+    row.draggable=true;
+    row.addEventListener("dragstart",e=>{ row.classList.add("dragging"); e.dataTransfer.setData("text/plain",JSON.stringify({list,key,id:t.id})); });
+    row.addEventListener("dragend",()=>row.classList.remove("dragging"));
+    const dot=document.createElement("span"); dot.className="dot "+t.prio;
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=t.done;
+    cb.onchange=()=>{
+      if(key===LKEY && cb.checked){
+        // opravljeno dolgoročno opravilo premakni med današnja opravljena
+        const today=fmtKey(new Date());
+        data[list][LKEY]=(data[list][LKEY]||[]).filter(x=>x.id!==t.id);
+        t.done=true; dayArr(list,today).push(t);
+        save(); render(); return;
+      }
+      t.done=cb.checked; save(); render();
+    };
+    const sp=document.createElement("span"); sp.className="txt"; linkify(sp,t.txt);
+    const del=document.createElement("button"); del.className="del"; del.textContent="×";
+    del.onclick=()=>{ data[list][key]=data[list][key].filter(x=>x.id!==t.id); save(); render(); };
+    row.append(dot,cb,sp,del); cell.appendChild(row);
+  });
+  const f=document.createElement("div"); f.className="addmini";
+  const inp=document.createElement("input"); inp.placeholder="+ opravilo";
+  const sel=document.createElement("select"); sel.innerHTML='<option value="h">V</option><option value="m" selected>S</option><option value="l">N</option>';
+  const btn=document.createElement("button"); btn.textContent="+";
+  const doAdd=()=>{ const v=inp.value.trim(); if(!v)return; dayArr(list,key).push({id:Date.now()+Math.random(),txt:v,prio:sel.value,done:false}); inp.value=""; save(); render(); };
+  btn.onclick=doAdd; inp.addEventListener("keydown",e=>{if(e.key==="Enter")doAdd();});
+  f.append(inp,sel,btn); cell.appendChild(f);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(key) && arr.some(t=>!t.done)){
+    const c=document.createElement("button"); c.className="carry"; c.textContent="↪ prenesi nedokončana v jutri";
+    c.onclick=()=>{
+      const nd=new Date(key); nd.setDate(nd.getDate()+1); const nk=fmtKey(nd);
+      const pend=data[list][key].filter(t=>!t.done);
+      pend.forEach(t=>dayArr(list,nk).push({id:Date.now()+Math.random(),txt:t.txt,prio:t.prio,done:false}));
+      data[list][key]=data[list][key].filter(t=>t.done);
+      save(); render();
+    };
+    cell.appendChild(c);
+  }
+  return cell;
+}
+
+function render(){
+  const end=new Date(weekStart); end.setDate(end.getDate()+13);
+  const opt={day:"numeric",month:"short"};
+  document.getElementById("rangeLabel").textContent =
+    weekStart.toLocaleDateString("sl-SI",opt)+" – "+end.toLocaleDateString("sl-SI",{...opt,year:"numeric"});
+  const grid=document.getElementById("grid"); grid.innerHTML="";
+  const todayKey=fmtKey(new Date());
+  const curWeekStart=fmtKey(startOfWeek(new Date()));
+  const curWeekEnd=(()=>{const e=startOfWeek(new Date());e.setDate(e.getDate()+6);return fmtKey(e);})();
+  for(let i=0;i<14;i++){
+    const d=new Date(weekStart); d.setDate(d.getDate()+i); const key=fmtKey(d);
+    const inCurWeek = key>=curWeekStart && key<=curWeekEnd;
+    const row=document.createElement("div"); row.className="day"+(key===todayKey?" today":"")+(inCurWeek?"":" otherweek");
+    const lab=document.createElement("div"); lab.className="daylabel";
+    lab.innerHTML=`<div class="dn">${dayNames[i%7]}</div><div class="dd">${d.getDate()}.${d.getMonth()+1}.</div>`;
+    row.appendChild(lab);
+    const cd=cellEl("delo",key);
+    const cp=cellEl("privat",key);
+    const strip=eventStrip(key);
+    if(strip){
+      row.appendChild(strip);
+      lab.style.gridRow="1 / span 2"; lab.style.gridColumn="1";
+      cd.style.gridRow="2"; cd.style.gridColumn="2";
+      cp.style.gridRow="2"; cp.style.gridColumn="3";
+    }
+    row.appendChild(cd);
+    row.appendChild(cp);
+    grid.appendChild(row);
+  }
+  renderLong();
+}
+
+const LKEY="__long__";
+function renderLong(){
+  const lg=document.getElementById("longgrid"); lg.innerHTML="";
+  const row=document.createElement("div"); row.className="day longrow";
+  const lab=document.createElement("div"); lab.className="daylabel";
+  lab.innerHTML=`<div class="dn">Dolgo-</div><div class="dn">ročno</div>`;
+  row.appendChild(lab);
+  row.appendChild(cellEl("delo",LKEY));
+  row.appendChild(cellEl("privat",LKEY));
+  lg.appendChild(row);
+}
+
+function eventStrip(key){
+  const list=events[key]||[]; if(!list.length) return null;
+  const wrap=document.createElement("div"); wrap.className="evstrip";
+  wrap.style.gridColumn="2 / 4"; wrap.style.gridRow="1";
+  list.slice().sort((a,b)=>(a.time||"").localeCompare(b.time||"")).forEach(ev=>{
+    const e=document.createElement("div"); e.className="ev";
+    const tm=document.createElement("span"); tm.className="evtime"; tm.textContent=ev.time||"–";
+    const ti=document.createElement("span"); ti.className="evtitle"; ti.textContent=ev.title||"";
+    const x=document.createElement("button"); x.className="evx"; x.textContent="×"; x.title="Odstrani dogodek";
+    x.onclick=()=>{ events[key]=events[key].filter(z=>z.id!==ev.id); if(!events[key].length) delete events[key]; evSave(); render(); };
+    e.append(tm,ti,x); wrap.appendChild(e);
+  });
+  return wrap;
+}
+
+document.getElementById("prev").onclick=()=>{weekStart.setDate(weekStart.getDate()-7); weekStart=new Date(weekStart); render();};
+document.getElementById("next").onclick=()=>{weekStart.setDate(weekStart.getDate()+7); weekStart=new Date(weekStart); render();};
+document.getElementById("thisLink").onclick=()=>{weekStart=startOfWeek(new Date()); render();};
+document.getElementById("printBtn").onclick=()=>window.print();
+
+/* ---------- Današnji pregled (digest predogled, nespremenjen) ---------- */
+const prioName={h:"visoka",m:"srednja",l:"nizka"};
+function openTasks(list,key){ return dayArr(list,key).filter(t=>!t.done).sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]); }
+function taskLi(t){ return `<li><span class="dot ${t.prio}"></span><span>${t.txt.replace(/</g,"&lt;")}</span></li>`; }
+function secHtml(title,icon,tasks){
+  const body = tasks.length ? `<ul>${tasks.map(taskLi).join("")}</ul>` : `<div class="digest-empty">Ni odprtih opravil.</div>`;
+  return `<div class="digest-sec"><h3>${icon} ${title}</h3>${body}</div>`;
+}
+function openOnDay(list,key){ return openTasks(list,key); }
+function openExceptDay(list,exceptKey){
+  const m=data[list]||{}; const out=[];
+  Object.keys(m).forEach(k=>{ if(k!==exceptKey) m[k].forEach(t=>{ if(!t.done) out.push(t); }); });
+  return out.sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
+}
+function renderDigest(){
+  const key=fmtKey(new Date());
+  const delo=openOnDay("delo",key), privat=openOnDay("privat",key);
+  const otherDelo=openExceptDay("delo",key), otherPrivat=openExceptDay("privat",key);
+  const todayAll=[...delo,...privat];
+  const high=todayAll.filter(t=>t.prio==="h");
+  const dateStr=new Date().toLocaleDateString("sl-SI",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const topHtml = high.length ? `<ul>${high.map(taskLi).join("")}</ul>` : `<div class="digest-empty">Danes ni opravil z visoko prioriteto.</div>`;
+  const otherCount=otherDelo.length+otherPrivat.length;
+  const otherHtml = otherCount ? `<div class="digest-sec"><h3>🗂 Ostala odprta opravila</h3><ul>${[...otherDelo,...otherPrivat].map(taskLi).join("")}</ul></div>` : "";
+  const ov=document.createElement("div"); ov.className="digest-overlay";
+  ov.addEventListener("click",e=>{ if(e.target===ov) ov.remove(); });
+  ov.innerHTML=`<div class="digest-card">
+    <h2>Jutranji pregled</h2>
+    <div class="dsub">${dateStr}</div>
+    <div class="digest-sec"><h3>🎯 Najpomembnejše danes</h3>${topHtml}</div>
+    ${secHtml("Delo (danes)","💼",delo)}
+    ${secHtml("Privat (danes)","🏠",privat)}
+    ${otherHtml}
+    <div class="digest-summary">📌 Danes odprtih: ${delo.length} delo · ${privat.length} privat — od tega ${high.length} z visoko prioriteto.${otherCount?` Še ${otherCount} odprtih na druge dni.`:""}</div>
+    <div class="digest-actions">
+      <button class="primary" data-act="print">🖨 Natisni</button>
+      <a class="primary" data-act="mail">✉️ Pošlji na mail</a>
+      <button class="secondary" data-act="close">Zapri</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const txt=buildDigestText(dateStr,high,delo,privat,otherDelo,otherPrivat);
+  const mail="mailto:damijan.perhavec@gmail.com?subject="+encodeURIComponent("Jutranji pregled — "+dateStr)+"&body="+encodeURIComponent(txt);
+  ov.querySelector('[data-act="mail"]').href=mail;
+  ov.querySelector('[data-act="close"]').onclick=()=>ov.remove();
+  ov.querySelector('[data-act="print"]').onclick=()=>{
+    document.body.classList.add("print-digest");
+    const cleanup=()=>{ document.body.classList.remove("print-digest"); window.removeEventListener("afterprint",cleanup); };
+    window.addEventListener("afterprint",cleanup); window.print();
+  };
+}
+function lineTasks(tasks){ return tasks.length ? tasks.map(t=>"  • ["+prioName[t.prio][0].toUpperCase()+"] "+t.txt).join("\n") : "  (ni opravil)"; }
+function buildDigestText(dateStr,high,delo,privat,otherDelo,otherPrivat){
+  let s="JUTRANJI PREGLED — "+dateStr+"\n\n";
+  s+="🎯 Najpomembnejše danes:\n"+lineTasks(high)+"\n\n";
+  s+="💼 Delo (danes):\n"+lineTasks(delo)+"\n\n";
+  s+="🏠 Privat (danes):\n"+lineTasks(privat)+"\n";
+  const other=[...otherDelo,...otherPrivat];
+  if(other.length) s+="\n🗂 Ostala odprta opravila:\n"+lineTasks(other)+"\n";
+  s+="\n📌 Danes odprtih: "+delo.length+" delo · "+privat.length+" privat, od tega "+high.length+" visoka prioriteta.";
+  return s;
+}
+document.getElementById("digestBtn").onclick=renderDigest;
+
+// Primer dogodkov, da je prikaz viden, dokler iCloud vir (prek digesta) ni priklopljen.
+// Vsebujejo "(primer)" — jutranji digest take vrstice ignorira. Lahko jih odstraniš z ×.
+if(Object.keys(events).length===0){
+  const t1=fmtKey(new Date());
+  const nd=new Date(); nd.setDate(nd.getDate()+1); const t2=fmtKey(nd);
+  events[t1]=[{id:Date.now()+0.11,time:"10:00",title:"Sestanek (primer)"}];
+  events[t2]=[{id:Date.now()+0.22,time:"08:30",title:"Klic dobavitelj (primer)"}];
+  localStorage.setItem(EVSTORE,JSON.stringify(events));
+}
+
+render();
+restoreHandle();
+// GitHub: če je naprava že povezana, naloži najnovejše stanje z GitHub
+if(ghConfigured()){
+  ghStatus(true,"povezujem z GitHub…");
+  ghLoad().then(r=>{ if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); } });
+}
+</script>
+</body>
+</html>
