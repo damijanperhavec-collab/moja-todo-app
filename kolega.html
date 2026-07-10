@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moje dodeljene naloge</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f7f7f5; color:#2b2b2b; margin:0; padding:16px; }
+.wrap { max-width:640px; margin:0 auto; }
+h1 { font-size:19px; margin:0 0 4px; }
+.subtitle { color:#888; font-size:13px; margin:0 0 14px; }
+.bar { display:flex; align-items:center; gap:10px; margin-bottom:14px; font-size:13px; }
+.pill { display:inline-flex; align-items:center; gap:6px; background:#fff; border:1px solid #e3e3e0; border-radius:20px; padding:5px 12px; cursor:pointer; }
+.pill:hover { border-color:#6c8ef5; }
+.sdot { width:9px; height:9px; border-radius:50%; background:#c9c9c9; }
+.bar.on .sdot { background:#4caf50; }
+.smsg { color:#999; }
+.bar.on .smsg { color:#4caf50; }
+.card { background:#fff; border-radius:12px; padding:10px 12px; box-shadow:0 1px 3px rgba(0,0,0,.06); min-height:80px; }
+.prio-group { margin-bottom:10px; }
+.prio-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#8a93a6; margin:6px 0 4px; display:flex; align-items:center; gap:6px; }
+.pt-dot { width:9px; height:9px; border-radius:50%; }
+.pt-dot.h{background:#e2483d;} .pt-dot.m{background:#e0922f;} .pt-dot.l{background:#4caf50;}
+.task { display:flex; align-items:center; gap:8px; padding:6px 4px; border-radius:6px; }
+.task:hover { background:#f6f6f4; }
+.task .dot { width:9px; height:9px; border-radius:50%; flex:none; cursor:pointer; }
+.dot.h{background:#e2483d;} .dot.m{background:#e0922f;} .dot.l{background:#4caf50;}
+.task input[type=checkbox]{ width:16px; height:16px; cursor:pointer; flex:none; }
+.task .txt { flex:1; min-width:0; font-size:14px; overflow-wrap:anywhere; }
+.task.done .txt { text-decoration:line-through; color:#bbb; }
+.task .txt a { color:#2c6ed5; }
+.task .del { border:none; background:none; color:#d2d2d2; cursor:pointer; font-size:16px; }
+.task .del:hover { color:#e2483d; }
+.empty { color:#bbb; font-style:italic; font-size:13px; padding:8px 4px; }
+.addrow { display:flex; gap:6px; margin-top:12px; }
+.addrow input { flex:1; min-width:0; padding:9px 10px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+.addrow select { padding:9px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+.addrow button { border:none; background:#2b2b2b; color:#fff; border-radius:8px; padding:9px 14px; cursor:pointer; font-size:14px; }
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:60; overflow:auto; }
+.modal { background:#fff; border-radius:14px; max-width:420px; width:100%; padding:22px 24px; box-shadow:0 8px 30px rgba(0,0,0,.2); }
+.modal h2 { font-size:16px; margin:0 0 4px; }
+.modal p { color:#888; font-size:12px; margin:0 0 12px; }
+.modal label { display:block; font-size:12px; color:#555; margin:9px 0 3px; font-weight:600; }
+.modal input { width:100%; padding:8px 10px; border:1px solid #ddd; border-radius:8px; font-size:13px; }
+.modal .acts { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+.modal .acts button { border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-size:14px; }
+.modal .acts .primary { background:#6c8ef5; color:#fff; }
+.modal .acts .secondary { background:#efeff0; color:#444; }
+.modal .stat { font-size:12px; margin-top:10px; min-height:15px; }
+.priomenu { position:absolute; z-index:70; background:#fff; border:1px solid #e2e2e2; border-radius:9px; box-shadow:0 6px 20px rgba(0,0,0,.16); padding:4px; min-width:130px; }
+.priomenu button { display:flex; align-items:center; gap:8px; width:100%; border:none; background:none; padding:7px 9px; border-radius:6px; cursor:pointer; font-size:13px; text-align:left; color:#333; }
+.priomenu button:hover { background:#f2f4fb; }
+.priomenu .pdot { width:11px; height:11px; border-radius:50%; }
+.priomenu .pdot.h{background:#e2483d;} .priomenu .pdot.m{background:#e0922f;} .priomenu .pdot.l{background:#4caf50;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📥 Moje dodeljene naloge</h1>
+  <p class="subtitle">Seznam nalog, ki so ti dodeljene. Spremembe se samodejno shranijo.</p>
+  <div class="bar" id="bar">
+    <span class="pill" id="connectPill"><span class="sdot"></span><span id="connectLabel">🔗 Poveži</span></span>
+    <span class="smsg" id="msg">ni povezano</span>
+  </div>
+  <div class="card" id="list"></div>
+  <div class="addrow">
+    <input id="newTask" placeholder="+ nova naloga">
+    <select id="newPrio"><option value="h">Visoka</option><option value="m" selected>Srednja</option><option value="l">Nizka</option></select>
+    <button id="addBtn">Dodaj</button>
+  </div>
+</div>
+<script>
+const CFG="kolega_cfg_v1", CACHE="kolega_cache_v1";
+let cfg=JSON.parse(localStorage.getItem(CFG)||"null");
+let tasks=JSON.parse(localStorage.getItem(CACHE)||"[]");
+let sha=null, loaded=false, timer=null, busy=false;
+const prioOrder={h:0,m:1,l:2}, P2CODE={h:"V",m:"S",l:"N"}, CODE2P={V:"h",S:"m",N:"l"};
+const prioName={h:"Visoka",m:"Srednja",l:"Nizka"};
+
+function b64e(str){ const b=new TextEncoder().encode(str); let s=""; b.forEach(x=>s+=String.fromCharCode(x)); return btoa(s); }
+function b64d(b64){ const bin=atob((b64||"").replace(/\s/g,"")); return new TextDecoder().decode(Uint8Array.from(bin,c=>c.charCodeAt(0))); }
+function apiUrl(){ return "https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/"); }
+function headers(){ return {Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}; }
+
+function serialize(){
+  const list=tasks.map(t=>({id:t.id,txt:t.txt,prio:t.prio,done:!!t.done}));
+  let h="# Dodeljene naloge\n\n> Skupni seznam (živa dvosmerna sinhronizacija).\n> (V) visoka / (S) srednja / (N) nizka. Opravljeno = [x].\n\n";
+  const s=list.slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
+  if(!s.length) h+="_(ni nalog)_\n"; else s.forEach(t=>h+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+"\n");
+  h+="\n<!-- ASSIGNED_STATE\n"+JSON.stringify({tasks:list})+"\nASSIGNED_STATE -->\n";
+  return h;
+}
+function parse(text){
+  const m=text.match(/<!--\s*ASSIGNED_STATE\s*([\s\S]*?)\s*ASSIGNED_STATE\s*-->/);
+  if(m){ try{ const o=JSON.parse(m[1].trim()); if(o&&Array.isArray(o.tasks)) return o.tasks; }catch(e){} }
+  return [];
+}
+function setBar(on,text){ document.getElementById("bar").classList.toggle("on",on); document.getElementById("connectLabel").textContent=on?"✓ Povezano":"🔗 Poveži"; if(text) document.getElementById("msg").textContent=text; }
+function nowTime(){ return new Date().toLocaleTimeString("sl-SI",{hour:"2-digit",minute:"2-digit"}); }
+
+async function load(){
+  if(!cfg) return;
+  try{
+    const r=await fetch(apiUrl()+"?ref="+(cfg.branch||"main"),{headers:headers()});
+    if(r.status===200){ const j=await r.json(); const txt=b64d(j.content);
+      if(/TODO_APP_STATE/.test(txt)){ setBar(false,"napačna datoteka (glavna lista) — uporabi assigned.md"); return; }
+      sha=j.sha; tasks=parse(txt); loaded=true; localStorage.setItem(CACHE,JSON.stringify(tasks)); setBar(true,"povezano"); render();
+    } else if(r.status===404){ sha=null; loaded=true; setBar(true,"povezano (nova datoteka)"); render(); }
+    else { setBar(false,"napaka "+r.status+" — preveri žeton/dostop"); }
+  }catch(e){ setBar(false,"ni povezave"); }
+}
+function scheduleSave(){ if(!cfg) return; clearTimeout(timer); timer=setTimeout(save,700); }
+async function save(){
+  if(!cfg||!loaded||busy) return; busy=true;
+  try{
+    const content=serialize();
+    // varovalka: ne prepiši nepraznega s praznim
+    if(tasks.length===0){ const g=await fetch(apiUrl()+"?ref="+(cfg.branch||"main"),{headers:headers()}); if(g.status===200){ const rt=b64d((await g.json()).content); if(parse(rt).length>0){ busy=false; return; } } }
+    const body={message:"assigned update "+new Date().toISOString(),content:b64e(content),branch:(cfg.branch||"main")}; if(sha) body.sha=sha;
+    let r=await fetch(apiUrl(),{method:"PUT",headers:headers(),body:JSON.stringify(body)});
+    if(r.status===409||r.status===422){ const g=await fetch(apiUrl()+"?ref="+(cfg.branch||"main"),{headers:headers()}); if(g.status===200){ sha=(await g.json()).sha; body.sha=sha; r=await fetch(apiUrl(),{method:"PUT",headers:headers(),body:JSON.stringify(body)}); } }
+    if(r.ok){ const j=await r.json(); sha=j.content&&j.content.sha; setBar(true,"shranjeno ob "+nowTime()); }
+    else setBar(true,"napaka pri shranjevanju ("+r.status+")");
+  }catch(e){ setBar(true,"ni povezave za shranjevanje"); }
+  finally{ busy=false; }
+}
+function persist(){ localStorage.setItem(CACHE,JSON.stringify(tasks)); scheduleSave(); }
+
+function linkify(el,text){
+  el.textContent=""; const re=/(https?:\/\/[^\s]+|www\.[^\s]+)/gi; let last=0,m,found=false;
+  while((m=re.exec(text))){ found=true; if(m.index>last) el.appendChild(document.createTextNode(text.slice(last,m.index)));
+    let raw=m[0]; const tr=(raw.match(/[).,;:!?]+$/)||[""])[0]; if(tr) raw=raw.slice(0,raw.length-tr.length);
+    const a=document.createElement("a"); a.href=raw.startsWith("http")?raw:"https://"+raw; a.textContent=raw; a.target="_blank"; a.rel="noopener"; a.onclick=e=>e.stopPropagation(); el.appendChild(a); if(tr) el.appendChild(document.createTextNode(tr)); last=m.index+m[0].length; }
+  if(last<text.length) el.appendChild(document.createTextNode(text.slice(last))); if(!found) el.textContent=text;
+}
+function closeMenu(){ const m=document.getElementById("__pm"); if(m) m.remove(); document.removeEventListener("mousedown",outside,true); }
+function outside(e){ const m=document.getElementById("__pm"); if(m&&!m.contains(e.target)) closeMenu(); }
+function openMenu(anchor,t){
+  closeMenu(); const menu=document.createElement("div"); menu.className="priomenu"; menu.id="__pm";
+  [["h","Visoka"],["m","Srednja"],["l","Nizka"]].forEach(([p,l])=>{ const b=document.createElement("button"); b.innerHTML='<span class="pdot '+p+'"></span>'+l+(t.prio===p?" ✓":""); b.onclick=ev=>{ ev.stopPropagation(); closeMenu(); if(t.prio!==p){ t.prio=p; persist(); render(); } }; menu.appendChild(b); });
+  document.body.appendChild(menu); const r=anchor.getBoundingClientRect(); menu.style.left=(window.scrollX+r.left)+"px"; menu.style.top=(window.scrollY+r.bottom+5)+"px";
+  const mr=menu.getBoundingClientRect(); if(mr.right>window.innerWidth-8) menu.style.left=(window.scrollX+window.innerWidth-mr.width-8)+"px";
+  setTimeout(()=>document.addEventListener("mousedown",outside,true),0);
+}
+
+function render(){
+  const box=document.getElementById("list"); box.innerHTML="";
+  if(!tasks.length){ box.innerHTML='<div class="empty">'+(cfg?"Ni dodeljenih nalog.":"Klikni »Poveži«, da naložiš svoj seznam.")+'</div>'; return; }
+  [["h","Visoka"],["m","Srednja"],["l","Nizka"]].forEach(([p,label])=>{
+    const items=tasks.filter(t=>t.prio===p).sort((a,b)=>a.done-b.done);
+    if(!items.length) return;
+    const g=document.createElement("div"); g.className="prio-group";
+    g.innerHTML='<div class="prio-title"><span class="pt-dot '+p+'"></span>'+label+'</div>';
+    items.forEach(t=>{
+      const row=document.createElement("div"); row.className="task"+(t.done?" done":"");
+      const dot=document.createElement("span"); dot.className="dot "+t.prio; dot.title="Klik: prioriteta"; dot.onclick=e=>{ e.stopPropagation(); openMenu(dot,t); };
+      const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=t.done; cb.onchange=()=>{ t.done=cb.checked; persist(); render(); };
+      const sp=document.createElement("span"); sp.className="txt"; sp.title="Dvojni klik za urejanje"; linkify(sp,t.txt);
+      sp.addEventListener("dblclick",()=>{ const inp=document.createElement("input"); inp.type="text"; inp.value=t.txt; inp.style.cssText="flex:1;min-width:0;font-size:14px;padding:3px 6px;border:1px solid #6c8ef5;border-radius:6px;";
+        let done=false; const commit=()=>{ if(done)return; done=true; const v=inp.value.trim(); if(v) t.txt=v; persist(); render(); };
+        inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){e.preventDefault();commit();} else if(e.key==="Escape"){done=true;render();} }); inp.addEventListener("blur",commit);
+        row.replaceChild(inp,sp); inp.focus(); inp.select(); });
+      const del=document.createElement("button"); del.className="del"; del.textContent="×"; del.onclick=()=>{ tasks=tasks.filter(x=>x.id!==t.id); persist(); render(); };
+      row.append(dot,cb,sp,del); g.appendChild(row);
+    });
+    box.appendChild(g);
+  });
+}
+
+function addTask(){ const i=document.getElementById("newTask"), p=document.getElementById("newPrio"); const v=i.value.trim(); if(!v) return; tasks.push({id:Date.now()+Math.random(),txt:v,prio:p.value,done:false}); i.value=""; persist(); render(); }
+document.getElementById("addBtn").onclick=addTask;
+document.getElementById("newTask").addEventListener("keydown",e=>{ if(e.key==="Enter") addTask(); });
+
+function openModal(){
+  const bg=document.createElement("div"); bg.className="modal-bg"; bg.addEventListener("click",e=>{ if(e.target===bg) bg.remove(); });
+  const g=cfg||{owner:"damijanperhavec-collab",branch:"main",path:"assigned.md"};
+  bg.innerHTML='<div class="modal"><h2>Poveži svoj seznam</h2><p>Vpiši podatke, ki ti jih je poslal lastnik. Žeton se shrani samo v tej napravi.</p>'+
+    '<label>Uporabniško ime (owner)</label><input id="m_owner" value="'+((g.owner||"").replace(/"/g,"&quot;"))+'">'+
+    '<label>Repozitorij</label><input id="m_repo" placeholder="todo-nastja" value="'+((g.repo||"").replace(/"/g,"&quot;"))+'">'+
+    '<label>Pot</label><input id="m_path" value="'+((g.path||"assigned.md").replace(/"/g,"&quot;"))+'">'+
+    '<label>Žeton</label><input id="m_token" type="password" value="'+((g.token||"").replace(/"/g,"&quot;"))+'">'+
+    '<div class="stat" id="m_stat"></div>'+
+    '<div class="acts"><button class="primary" id="m_save">Poveži</button>'+(cfg?'<button class="secondary" id="m_unlink">Odklopi</button>':'')+'<button class="secondary" id="m_close">Zapri</button></div></div>';
+  document.body.appendChild(bg);
+  bg.querySelector("#m_close").onclick=()=>bg.remove();
+  const un=bg.querySelector("#m_unlink"); if(un) un.onclick=()=>{ cfg=null; localStorage.removeItem(CFG); sha=null; loaded=false; setBar(false,"ni povezano"); bg.remove(); render(); };
+  bg.querySelector("#m_save").onclick=async()=>{
+    const stat=bg.querySelector("#m_stat"); stat.style.color="#888"; stat.textContent="Povezujem…";
+    cfg={owner:bg.querySelector("#m_owner").value.trim(),repo:bg.querySelector("#m_repo").value.trim(),branch:g.branch||"main",path:bg.querySelector("#m_path").value.trim()||"assigned.md",token:bg.querySelector("#m_token").value.trim()};
+    if(!cfg.owner||!cfg.repo||!cfg.token){ stat.style.color="#c0392b"; stat.textContent="Izpolni owner, repo in žeton."; cfg=null; return; }
+    localStorage.setItem(CFG,JSON.stringify(cfg));
+    await load();
+    if(loaded){ stat.style.color="#2e7d32"; stat.textContent="Povezano."; setTimeout(()=>bg.remove(),700); }
+    else { stat.style.color="#c0392b"; stat.textContent=document.getElementById("msg").textContent; }
+  };
+}
+document.getElementById("connectPill").onclick=openModal;
+
+render();
+if(cfg){ setBar(true,"povezujem…"); load(); }
+</script>
+</body>
+</html>
