@@ -128,11 +128,16 @@ h1 { font-size: 20px; margin: 0 0 12px; }
   body.print-digest .digest-card { box-shadow:none; max-width:none; }
   body.print-digest .digest-actions { display:none !important; }
 }
+.previewwarn { display:none; background:#fff4e5; border:1px solid #f0c58a; color:#8a5a00; border-radius:10px; padding:8px 34px 8px 12px; margin-bottom:12px; font-size:13px; position:relative; }
+.previewwarn a { color:#6c8ef5; }
+.previewwarn .pwx { position:absolute; top:6px; right:8px; border:none; background:none; color:#c8a97a; font-size:16px; cursor:pointer; line-height:1; }
+.previewwarn .pwx:hover { color:#8a5a00; }
 @media (max-width: 640px){
   .day,.colhead{ grid-template-columns: 60px 1fr 1fr; }
   .task .txt,.addmini input{ font-size:12px; }
 }
 @media print {
+  .previewwarn { display:none !important; }
   body { background:#fff; padding:0; }
   .weekbar button, .this-link, .addmini, .carry, .del, .task input[type=checkbox], .printbtn { display:none !important; }
   .legend { margin-top:8px; }
@@ -146,6 +151,11 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 <body>
 <div class="wrap">
   <h1>📋 Moja ToDo lista — tedenski pregled</h1>
+  <div class="previewwarn" id="previewWarn">
+    <button class="pwx" id="pwClose" title="Zapri">×</button>
+    ⚠️ Ta predogled nima povezave do GitHuba, zato se sinhronizacija tukaj ne poveže.
+    Uporabi spletno različico: <a href="https://damijanperhavec-collab.github.io/moja-todo-app/" target="_blank" rel="noopener">odpri aplikacijo</a>.
+  </div>
   <div class="syncbar" id="syncbar">
     <span class="pill" id="ghPill"><span class="sdot" id="ghDot"></span><span id="ghLabel">☁︎ GitHub sync</span></span>
     <span class="pill" id="connectPill"><span class="sdot"></span><span id="connectLabel">🔗 Lokalna datoteka</span></span>
@@ -161,6 +171,7 @@ h1 { font-size: 20px; margin: 0 0 12px; }
     <div style="display:flex;gap:8px;align-items:center;">
       <button id="next">Naslednji teden ›</button>
       <button class="digestbtn" id="digestBtn">📊 Današnji pregled</button>
+      <button id="exportBtn">📋 Izvozi</button>
       <button class="printbtn" id="printBtn">🖨 Natisni</button>
     </div>
   </div>
@@ -331,10 +342,8 @@ async function readFromFile(){
 
 async function connectFile(){
   if(!supportsFS){
-    // Safari / peskovnik: ponudi uvoz/izvoz
-    if(confirm("Tvoj brskalnik ne podpira neposredne povezave.\n\nOK = uvozi to-do.md  ·  Prekliči = prenesi to-do.md")){
-      document.getElementById("importInput").click();
-    } else { downloadMd(); }
+    // Safari / Cowork peskovnik: pokaži besedilo za kopiranje + uvoz/prenos
+    showExportModal();
     return;
   }
   try{
@@ -358,6 +367,29 @@ function downloadMd(){
   const blob=new Blob([serializeMd()],{type:"text/markdown"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="to-do.md"; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+// Izvoz besedila za kopiranje (deluje tudi v Cowork peskovniku, kjer prenos ne gre)
+function showExportModal(){
+  const bg=document.createElement("div"); bg.className="gh-modal-bg";
+  bg.addEventListener("click",e=>{ if(e.target===bg) bg.remove(); });
+  const md=serializeMd();
+  const card=document.createElement("div"); card.className="gh-modal"; card.style.maxWidth="560px";
+  card.innerHTML='<h2>Izvozi listo (za GitHub)</h2><p class="sub">Klikni Kopiraj in besedilo prilepi v datoteko to-do.md na GitHubu. To je tvoje trenutno stanje.</p>';
+  const ta=document.createElement("textarea"); ta.value=md; ta.readOnly=true;
+  ta.style.cssText="width:100%;height:220px;font-family:monospace;font-size:11px;border:1px solid #ddd;border-radius:8px;padding:8px;white-space:pre;overflow:auto;";
+  card.appendChild(ta);
+  const stat=document.createElement("div"); stat.className="ghstat";
+  const acts=document.createElement("div"); acts.className="ghactions";
+  const copyBtn=document.createElement("button"); copyBtn.className="primary"; copyBtn.textContent="Kopiraj besedilo";
+  copyBtn.onclick=async()=>{ try{ await navigator.clipboard.writeText(md); }catch(e){ ta.focus(); ta.select(); try{document.execCommand("copy");}catch(_){} } stat.style.color="#2e7d32"; stat.textContent="Kopirano. Prilepi v to-do.md na GitHubu."; };
+  const dlBtn=document.createElement("button"); dlBtn.className="secondary"; dlBtn.textContent="Poskusi prenos"; dlBtn.onclick=downloadMd;
+  const impBtn=document.createElement("button"); impBtn.className="secondary"; impBtn.textContent="Uvozi…"; impBtn.onclick=()=>document.getElementById("importInput").click();
+  const close=document.createElement("button"); close.className="secondary"; close.textContent="Zapri"; close.onclick=()=>bg.remove();
+  acts.append(copyBtn,dlBtn,impBtn,close);
+  card.appendChild(stat); card.appendChild(acts);
+  bg.appendChild(card); document.body.appendChild(bg);
+  ta.focus(); ta.select();
 }
 
 async function restoreHandle(){
@@ -386,6 +418,7 @@ const GH_CFG="todo_gh_cfg_v1";
 let gh = JSON.parse(localStorage.getItem(GH_CFG) || "null"); // {owner,repo,branch,path,token}
 let ghSha=null, ghTimer=null, ghBusy=false;
 function ghConfigured(){ return !!(gh && gh.owner && gh.repo && gh.token); }
+function taskCount(d){ let n=0; ["delo","privat"].forEach(l=>{ const m=d[l]||{}; Object.keys(m).forEach(k=>n+=(m[k]||[]).length); }); return n; }
 function nowTime(){ return new Date().toLocaleTimeString("sl-SI",{hour:"2-digit",minute:"2-digit"}); }
 function ghStatus(connected,msg){
   document.getElementById("syncbar").classList.toggle("gh-connected",connected);
@@ -457,11 +490,25 @@ function openGhModal(){
          branch:bg.querySelector("#gh_branch").value.trim()||"main", path:bg.querySelector("#gh_path").value.trim()||"to-do.md",
          token:bg.querySelector("#gh_token").value.trim() };
     if(!ghConfigured()){ stat.style.color="#c0392b"; stat.textContent="Izpolni owner, repo in žeton."; return; }
+    // posnemi trenutno (lokalno) stanje, preden morda naložimo z GitHub
+    const beforeData=localStorage.getItem(STORE)||"{}", beforeEv=localStorage.getItem(EVSTORE)||"{}";
+    const localHadTasks=taskCount(JSON.parse(beforeData))>0;
     const r=await ghLoad();
     if(!r.ok){ stat.style.color="#c0392b"; stat.textContent="Napaka "+r.status+" — preveri owner/repo/žeton in dovoljenja."; return; }
     localStorage.setItem(GH_CFG,JSON.stringify(gh));
-    if(r.missing || r.empty){ await ghPush(); stat.textContent="Povezano. Datoteka ustvarjena/posodobljena na GitHub."; }
-    else { stat.textContent="Povezano in naloženo z GitHub."; }
+    const fileHasData = taskCount(data)>0 || Object.keys(events).length>0;
+    if(!fileHasData && localHadTasks){
+      // datoteka na GitHub je prazna, lokalno pa imamo opravila → naložimo lokalna gor
+      data=JSON.parse(beforeData); events=JSON.parse(beforeEv);
+      localStorage.setItem(STORE,beforeData); localStorage.setItem(EVSTORE,beforeEv);
+      await ghPush();
+      stat.textContent="Povezano. Tvoja trenutna opravila so naložena na GitHub.";
+    } else if(r.missing || r.empty || !fileHasData){
+      await ghPush();
+      stat.textContent="Povezano. Datoteka pripravljena na GitHub.";
+    } else {
+      stat.textContent="Povezano in naloženo z GitHub.";
+    }
     stat.style.color="#2e7d32";
     ghStatus(true,"povezano z GitHub");
     render();
@@ -495,7 +542,8 @@ function cellEl(list,key){
     row.draggable=true;
     row.addEventListener("dragstart",e=>{ row.classList.add("dragging"); e.dataTransfer.setData("text/plain",JSON.stringify({list,key,id:t.id})); });
     row.addEventListener("dragend",()=>row.classList.remove("dragging"));
-    const dot=document.createElement("span"); dot.className="dot "+t.prio;
+    const dot=document.createElement("span"); dot.className="dot "+t.prio; dot.style.cursor="pointer"; dot.title="Klik: zamenjaj prioriteto (visoka → srednja → nizka)";
+    dot.onclick=()=>{ const nx={h:"m",m:"l",l:"h"}; t.prio=nx[t.prio]; save(); render(); };
     const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=t.done;
     cb.onchange=()=>{
       if(key===LKEY && cb.checked){
@@ -507,7 +555,18 @@ function cellEl(list,key){
       }
       t.done=cb.checked; save(); render();
     };
-    const sp=document.createElement("span"); sp.className="txt"; linkify(sp,t.txt);
+    const sp=document.createElement("span"); sp.className="txt"; sp.title="Dvojni klik za urejanje besedila"; linkify(sp,t.txt);
+    sp.addEventListener("dblclick",()=>{
+      const inpE=document.createElement("input"); inpE.type="text"; inpE.value=t.txt;
+      inpE.style.cssText="flex:1;min-width:0;font-size:13px;padding:2px 5px;border:1px solid #6c8ef5;border-radius:5px;";
+      inpE.addEventListener("mousedown",e=>e.stopPropagation());
+      row.draggable=false;
+      let doneEdit=false;
+      const commit=()=>{ if(doneEdit) return; doneEdit=true; const v=inpE.value.trim(); if(v) t.txt=v; save(); render(); };
+      inpE.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); commit(); } else if(e.key==="Escape"){ doneEdit=true; render(); } });
+      inpE.addEventListener("blur",commit);
+      row.replaceChild(inpE,sp); inpE.focus(); inpE.select();
+    });
     const del=document.createElement("button"); del.className="del"; del.textContent="×";
     del.onclick=()=>{ data[list][key]=data[list][key].filter(x=>x.id!==t.id); save(); render(); };
     row.append(dot,cb,sp,del); cell.appendChild(row);
@@ -596,6 +655,7 @@ document.getElementById("prev").onclick=()=>{weekStart.setDate(weekStart.getDate
 document.getElementById("next").onclick=()=>{weekStart.setDate(weekStart.getDate()+7); weekStart=new Date(weekStart); render();};
 document.getElementById("thisLink").onclick=()=>{weekStart=startOfWeek(new Date()); render();};
 document.getElementById("printBtn").onclick=()=>window.print();
+document.getElementById("exportBtn").onclick=showExportModal;
 
 /* ---------- Današnji pregled (digest predogled, nespremenjen) ---------- */
 const prioName={h:"visoka",m:"srednja",l:"nizka"};
@@ -670,6 +730,12 @@ if(Object.keys(events).length===0){
   events[t2]=[{id:Date.now()+0.22,time:"08:30",title:"Klic dobavitelj (primer)"}];
   localStorage.setItem(EVSTORE,JSON.stringify(events));
 }
+
+// Opozorilo prikaži samo, kadar aplikacija NE teče na spletni (GitHub Pages) različici
+if(!/\.github\.io$/i.test(location.hostname)){
+  const w=document.getElementById("previewWarn"); if(w) w.style.display="block";
+}
+{ const pc=document.getElementById("pwClose"); if(pc) pc.onclick=()=>{ document.getElementById("previewWarn").style.display="none"; }; }
 
 render();
 restoreHandle();
