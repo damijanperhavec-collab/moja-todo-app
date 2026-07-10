@@ -47,6 +47,15 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .longhead { margin-top: 20px; }
 .day.longrow .daylabel { background:#f1efe9; color:#6b6256; }
 .day.longrow .cell { background:#fcfbf8; }
+/* Dodeljeno (po osebah, čez oba stolpca) */
+.assignhead { font-weight:700; font-size:14px; color:#33415c; background:#e6ecfb; border-radius:8px; padding:6px 10px; margin:22px 0 8px; }
+.person { margin-bottom:10px; }
+.personhead { display:flex; align-items:center; gap:8px; background:#eef1f6; border:1px solid #e0e5f0; border-bottom:none; border-radius:8px 8px 0 0; padding:6px 10px; }
+.personhead .pname { font-weight:700; font-size:13px; color:#2b2b2b; cursor:default; }
+.personhead .pcount { font-size:11px; color:#8a93a6; }
+.personhead .personx { margin-left:auto; border:none; background:none; color:#c3cbe0; cursor:pointer; font-size:16px; line-height:1; }
+.personhead .personx:hover { color:#e2483d; }
+.person .cell { border:1px solid #e0e5f0; border-radius:0 0 8px 8px; }
 .cell {
   background: #fff; border-radius: 10px; padding: 8px; min-height: 60px; min-width: 0;
   box-shadow: 0 1px 2px rgba(0,0,0,.05);
@@ -194,6 +203,7 @@ h1 { font-size: 20px; margin: 0 0 12px; }
     <div class="h-privat">🏠 Dolgoročno privat</div>
   </div>
   <div id="longgrid"></div>
+  <div id="assignwrap"></div>
   <div class="legend">Prioriteta:
     <span class="dot h"></span>visoka
     <span class="dot m"></span>srednja
@@ -273,7 +283,20 @@ function serializeMd(){
     });
     return out+"\n";
   }
-  const human=head+section("💼 Delo (Work)","delo")+section("🏠 Privat (Personal)","privat");
+  function assignedSection(){
+    const m=data.dodeljeno||{}; const names=Object.keys(m);
+    let out="## 👥 Dodeljeno (Assigned)\n\n";
+    if(!names.length){ return out+"_(ni dodeljenih nalog)_\n\n"; }
+    names.forEach(n=>{
+      out+="### "+n+"\n";
+      const tasks=(m[n]||[]).slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
+      if(!tasks.length) out+="_(ni nalog)_\n";
+      tasks.forEach(t=>{ const due=t.due?" ("+t.due+")":""; out+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+due+"\n"; });
+      out+="\n";
+    });
+    return out;
+  }
+  const human=head+section("💼 Delo (Work)","delo")+section("🏠 Privat (Personal)","privat")+assignedSection();
   const machine="<!-- TODO_APP_STATE\n"+JSON.stringify(data)+"\nTODO_APP_STATE -->\n";
   const evblock="<!-- TODO_EVENTS\n"+JSON.stringify(events)+"\nTODO_EVENTS -->\n";
   return human+machine+evblock;
@@ -425,7 +448,7 @@ const GH_CFG="todo_gh_cfg_v1";
 let gh = JSON.parse(localStorage.getItem(GH_CFG) || "null"); // {owner,repo,branch,path,token}
 let ghSha=null, ghTimer=null, ghBusy=false;
 function ghConfigured(){ return !!(gh && gh.owner && gh.repo && gh.token); }
-function taskCount(d){ let n=0; ["delo","privat"].forEach(l=>{ const m=d[l]||{}; Object.keys(m).forEach(k=>n+=(m[k]||[]).length); }); return n; }
+function taskCount(d){ let n=0; ["delo","privat","dodeljeno"].forEach(l=>{ const m=d[l]||{}; Object.keys(m).forEach(k=>n+=(m[k]||[]).length); }); return n; }
 function nowTime(){ return new Date().toLocaleTimeString("sl-SI",{hour:"2-digit",minute:"2-digit"}); }
 function ghStatus(connected,msg){
   document.getElementById("syncbar").classList.toggle("gh-connected",connected);
@@ -650,6 +673,7 @@ function render(){
     grid.appendChild(row);
   }
   renderLong();
+  renderAssigned();
 }
 
 const LKEY="__long__";
@@ -662,6 +686,44 @@ function renderLong(){
   row.appendChild(cellEl("delo",LKEY));
   row.appendChild(cellEl("privat",LKEY));
   lg.appendChild(row);
+}
+
+function renderAssigned(){
+  const wrap=document.getElementById("assignwrap"); wrap.innerHTML="";
+  const head=document.createElement("div"); head.className="assignhead"; head.textContent="👥 Dodeljeno";
+  wrap.appendChild(head);
+  const people=data.dodeljeno||(data.dodeljeno={});
+  Object.keys(people).forEach(name=>{
+    const block=document.createElement("div"); block.className="person";
+    const ph=document.createElement("div"); ph.className="personhead";
+    const nm=document.createElement("span"); nm.className="pname"; nm.textContent=name; nm.title="Dvojni klik za preimenovanje";
+    nm.addEventListener("dblclick",()=>renamePerson(name));
+    const cnt=document.createElement("span"); cnt.className="pcount";
+    const open=(people[name]||[]).filter(t=>!t.done).length; cnt.textContent=open?open+" odprtih":"";
+    const x=document.createElement("button"); x.className="personx"; x.textContent="×"; x.title="Odstrani osebo";
+    x.onclick=()=>removePerson(name);
+    ph.append(nm,cnt,x);
+    block.appendChild(ph);
+    block.appendChild(cellEl("dodeljeno",name));
+    wrap.appendChild(block);
+  });
+  const ap=document.createElement("div"); ap.className="addperson";
+  const inp=document.createElement("input"); inp.placeholder="+ ime in priimek osebe";
+  const btn=document.createElement("button"); btn.textContent="Dodaj osebo";
+  const add=()=>{ const v=inp.value.trim(); if(!v) return; if(!data.dodeljeno[v]) data.dodeljeno[v]=[]; inp.value=""; save(); render(); };
+  btn.onclick=add; inp.addEventListener("keydown",e=>{ if(e.key==="Enter") add(); });
+  ap.append(inp,btn); wrap.appendChild(ap);
+}
+function removePerson(name){
+  const has=(data.dodeljeno[name]||[]).length;
+  if(has && !confirm("Odstranim osebo \""+name+"\" in njenih "+has+" nalog?")) return;
+  delete data.dodeljeno[name]; save(); render();
+}
+function renamePerson(name){
+  const nn=prompt("Novo ime osebe:",name); if(nn==null) return;
+  const v=nn.trim(); if(!v||v===name) return;
+  if(data.dodeljeno[v]){ alert("Oseba s tem imenom že obstaja."); return; }
+  data.dodeljeno[v]=data.dodeljeno[name]; delete data.dodeljeno[name]; save(); render();
 }
 
 function eventStrip(key){
