@@ -53,7 +53,10 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .personhead { display:flex; align-items:center; gap:8px; background:#eef1f6; border:1px solid #e0e5f0; border-bottom:none; border-radius:8px 8px 0 0; padding:6px 10px; }
 .personhead .pname { font-weight:700; font-size:13px; color:#2b2b2b; cursor:default; }
 .personhead .pcount { font-size:11px; color:#8a93a6; }
-.personhead .personx { margin-left:auto; border:none; background:none; color:#c3cbe0; cursor:pointer; font-size:16px; line-height:1; }
+.personhead .personlink { margin-left:auto; border:1px solid #cdd6e6; background:#fff; color:#5b6b86; cursor:pointer; font-size:11px; border-radius:12px; padding:2px 8px; }
+.personhead .personlink.on { background:#e7f3ea; border-color:#bfe2c8; color:#2e7d32; }
+.personhead .personlink:hover { border-color:#6c8ef5; }
+.personhead .personx { border:none; background:none; color:#c3cbe0; cursor:pointer; font-size:16px; line-height:1; }
 .personhead .personx:hover { color:#e2483d; }
 .person .cell { border:1px solid #e0e5f0; border-radius:0 0 8px 8px; }
 .cell {
@@ -251,7 +254,7 @@ function linkify(el,text){
 function dayArr(list,key){ data[list]=data[list]||{}; data[list][key]=data[list][key]||[]; return data[list][key]; }
 
 /* ---------- shranjevanje: localStorage + (če povezano) datoteka ---------- */
-function save(){ localStorage.setItem(STORE, JSON.stringify(data)); scheduleFileWrite(); scheduleGitWrite(); }
+function save(){ localStorage.setItem(STORE, JSON.stringify(data)); scheduleFileWrite(); scheduleGitWrite(); scheduleAssignPush(); }
 function evSave(){ localStorage.setItem(EVSTORE, JSON.stringify(events)); scheduleFileWrite(); scheduleGitWrite(); }
 
 /* ====================================================================== */
@@ -289,6 +292,7 @@ function serializeMd(){
     if(!names.length){ return out+"_(ni dodeljenih nalog)_\n\n"; }
     names.forEach(n=>{
       out+="### "+n+"\n";
+      if(assignLinks[n]){ out+="_(deljeno — v ločeni shrambi)_\n\n"; return; }
       const tasks=(m[n]||[]).slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
       if(!tasks.length) out+="_(ni nalog)_\n";
       tasks.forEach(t=>{ const due=t.due?" ("+t.due+")":""; out+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+due+"\n"; });
@@ -296,8 +300,11 @@ function serializeMd(){
     });
     return out;
   }
+  // v lastnikovo to-do.md ne shranjujemo deljenih (povezanih) oseb — te živijo v svojih shrambah
+  const dodOut={}; Object.keys(data.dodeljeno||{}).forEach(n=>{ if(!assignLinks[n]) dodOut[n]=data.dodeljeno[n]; });
+  const dataOut=Object.assign({},data,{dodeljeno:dodOut});
   const human=head+section("💼 Delo (Work)","delo")+section("🏠 Privat (Personal)","privat")+assignedSection();
-  const machine="<!-- TODO_APP_STATE\n"+JSON.stringify(data)+"\nTODO_APP_STATE -->\n";
+  const machine="<!-- TODO_APP_STATE\n"+JSON.stringify(dataOut)+"\nTODO_APP_STATE -->\n";
   const evblock="<!-- TODO_EVENTS\n"+JSON.stringify(events)+"\nTODO_EVENTS -->\n";
   return human+machine+evblock;
 }
@@ -548,6 +555,102 @@ function openGhModal(){
 document.getElementById("ghPill").onclick=openGhModal;
 
 /* ====================================================================== */
+/*  DELJENI RAZDELEK "DODELJENO" (skupna shramba na osebo)                 */
+/*  Vsaka oseba je lahko povezana na svojo GitHub shrambo (assigned.md).   */
+/*  Datoteko živo bereta in pišeta lastnik in sodelavec.                   */
+/* ====================================================================== */
+const ALINKS="todo_assign_links_v1";
+let assignLinks = JSON.parse(localStorage.getItem(ALINKS) || "{}"); // { name: {owner,repo,branch,path,token} }
+let assignSha={}, lastAssignPush={}, assignTimer=null;
+
+function ghContentsGet(cfg){
+  const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/")+"?ref="+(cfg.branch||"main");
+  return fetch(url,{headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}});
+}
+function ghContentsPut(cfg,contentStr,sha){
+  const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/");
+  const body={message:"assigned update "+new Date().toISOString(),content:b64encode(contentStr),branch:(cfg.branch||"main")};
+  if(sha) body.sha=sha;
+  return fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},body:JSON.stringify(body)});
+}
+function serializeAssigned(name){
+  const tasks=(data.dodeljeno[name]||[]).map(t=>({id:t.id,txt:t.txt,prio:t.prio,done:!!t.done}));
+  let h="# Dodeljeno — "+name+"\n\n> Skupni seznam nalog. Urejata ga lastnik in "+name+" (živa dvosmerna sinhronizacija).\n> (V) visoka / (S) srednja / (N) nizka. Opravljeno = [x].\n\n";
+  const s=tasks.slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
+  if(!s.length) h+="_(ni nalog)_\n"; else s.forEach(t=>h+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+"\n");
+  h+="\n<!-- ASSIGNED_STATE\n"+JSON.stringify({tasks})+"\nASSIGNED_STATE -->\n";
+  return h;
+}
+function parseAssignedText(text){
+  const m=text.match(/<!--\s*ASSIGNED_STATE\s*([\s\S]*?)\s*ASSIGNED_STATE\s*-->/);
+  if(m){ try{ const o=JSON.parse(m[1].trim()); if(o&&Array.isArray(o.tasks)) return o.tasks; }catch(e){} }
+  return [];
+}
+async function fetchAssigned(name){
+  const cfg=assignLinks[name]; if(!cfg) return;
+  try{
+    const r=await ghContentsGet(cfg);
+    if(r.status===200){ const j=await r.json(); assignSha[name]=j.sha; data.dodeljeno[name]=parseAssignedText(b64decode(j.content)); lastAssignPush[name]=serializeAssigned(name); }
+    else if(r.status===404){ assignSha[name]=null; data.dodeljeno[name]=data.dodeljeno[name]||[]; }
+  }catch(e){}
+}
+async function pushAssigned(name){
+  const cfg=assignLinks[name]; if(!cfg) return;
+  const content=serializeAssigned(name);
+  if(lastAssignPush[name]===content) return;
+  try{
+    let r=await ghContentsPut(cfg,content,assignSha[name]);
+    if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
+    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; }
+  }catch(e){}
+}
+function scheduleAssignPush(){
+  if(!Object.keys(assignLinks).length) return;
+  clearTimeout(assignTimer);
+  assignTimer=setTimeout(()=>{ Object.keys(assignLinks).forEach(n=>pushAssigned(n)); },800);
+}
+function loadAllAssigned(){
+  const names=Object.keys(assignLinks);
+  if(!names.length) return;
+  Promise.all(names.map(fetchAssigned)).then(()=>render());
+}
+function openAssignLinkModal(name){
+  const bg=document.createElement("div"); bg.className="gh-modal-bg";
+  bg.addEventListener("click",e=>{ if(e.target===bg) bg.remove(); });
+  const g=assignLinks[name]||{owner:(gh&&gh.owner)||"",branch:"main",path:"assigned.md"};
+  bg.innerHTML='<div class="gh-modal">'+
+    '<h2>Deli razdelek: '+name.replace(/</g,"&lt;")+'</h2>'+
+    '<p class="sub">Poveži to osebo z njeno zasebno shrambo. Seznam bosta živo urejala oba.</p>'+
+    '<label>Uporabniško ime (owner)</label><input id="al_owner" value="'+((g.owner||"").replace(/"/g,"&quot;"))+'">'+
+    '<div class="ghrow"><div><label>Repozitorij</label><input id="al_repo" placeholder="todo-nastja" value="'+((g.repo||"").replace(/"/g,"&quot;"))+'"></div>'+
+    '<div><label>Veja</label><input id="al_branch" value="'+((g.branch||"main").replace(/"/g,"&quot;"))+'"></div></div>'+
+    '<label>Pot do datoteke</label><input id="al_path" value="'+((g.path||"assigned.md").replace(/"/g,"&quot;"))+'">'+
+    '<label>Žeton (Read and write)</label><input id="al_token" type="password" value="'+((g.token||"").replace(/"/g,"&quot;"))+'">'+
+    '<div class="ghstat" id="al_stat"></div>'+
+    '<div class="ghactions"><button class="primary" id="al_save">Poveži in sinhroniziraj</button>'+
+    (assignLinks[name]?'<button class="danger" id="al_unlink">Prekini deljenje</button>':'')+
+    '<button class="secondary" id="al_close">Zapri</button></div></div>';
+  document.body.appendChild(bg);
+  bg.querySelector("#al_close").onclick=()=>bg.remove();
+  const un=bg.querySelector("#al_unlink"); if(un) un.onclick=()=>{ delete assignLinks[name]; localStorage.setItem(ALINKS,JSON.stringify(assignLinks)); bg.remove(); render(); };
+  bg.querySelector("#al_save").onclick=async()=>{
+    const stat=bg.querySelector("#al_stat"); stat.style.color="#888"; stat.textContent="Povezujem…";
+    const cfg={owner:bg.querySelector("#al_owner").value.trim(),repo:bg.querySelector("#al_repo").value.trim(),branch:bg.querySelector("#al_branch").value.trim()||"main",path:bg.querySelector("#al_path").value.trim()||"assigned.md",token:bg.querySelector("#al_token").value.trim()};
+    if(!cfg.owner||!cfg.repo||!cfg.token){ stat.style.color="#c0392b"; stat.textContent="Izpolni owner, repo in žeton."; return; }
+    assignLinks[name]=cfg;
+    const localTasks=(data.dodeljeno[name]||[]).slice();
+    const r=await ghContentsGet(cfg);
+    if(!r.ok && r.status!==404){ delete assignLinks[name]; stat.style.color="#c0392b"; stat.textContent="Napaka "+r.status+" — preveri podatke in dovoljenja."; return; }
+    localStorage.setItem(ALINKS,JSON.stringify(assignLinks));
+    await fetchAssigned(name);
+    // če je v shrambi prazno, lokalne naloge naložimo gor
+    if((data.dodeljeno[name]||[]).length===0 && localTasks.length){ data.dodeljeno[name]=localTasks; lastAssignPush[name]=""; await pushAssigned(name); }
+    stat.style.color="#2e7d32"; stat.textContent="Povezano in sinhronizirano.";
+    render(); setTimeout(()=>bg.remove(),800);
+  };
+}
+
+/* ====================================================================== */
 /*  VIZUALNI PREGLED (nespremenjen)                                        */
 /* ====================================================================== */
 function moveTask(srcList,srcKey,id,dstList,dstKey){
@@ -700,9 +803,14 @@ function renderAssigned(){
     nm.addEventListener("dblclick",()=>renamePerson(name));
     const cnt=document.createElement("span"); cnt.className="pcount";
     const open=(people[name]||[]).filter(t=>!t.done).length; cnt.textContent=open?open+" odprtih":"";
+    const linked=!!assignLinks[name];
+    const lk=document.createElement("button"); lk.className="personlink"+(linked?" on":"");
+    lk.textContent=linked?"🔗 deljeno":"🔗 deli";
+    lk.title=linked?"Deljeno s shrambo — klik za nastavitve":"Poveži z osebno shrambo (deljenje)";
+    lk.onclick=()=>openAssignLinkModal(name);
     const x=document.createElement("button"); x.className="personx"; x.textContent="×"; x.title="Odstrani osebo";
     x.onclick=()=>removePerson(name);
-    ph.append(nm,cnt,x);
+    ph.append(nm,cnt,lk,x);
     block.appendChild(ph);
     block.appendChild(cellEl("dodeljeno",name));
     wrap.appendChild(block);
@@ -834,6 +942,8 @@ if(ghConfigured()){
   ghStatus(true,"povezujem z GitHub…");
   ghLoad().then(r=>{ if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); } });
 }
+// naloži deljene (povezane) osebe iz njihovih shramb
+loadAllAssigned();
 </script>
 </body>
 </html>
