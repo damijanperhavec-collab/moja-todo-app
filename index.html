@@ -474,8 +474,14 @@ async function ghLoad(){
   const res=await ghGet();
   if(res.status===200){
     const j=await res.json(); ghSha=j.sha; const txt=b64decode(j.content);
+    // varovalka: če glavna sinhronizacija po pomoti kaže na deljeni seznam (assigned.md), NE prepiši podatkov
+    if(/ASSIGNED_STATE/.test(txt) && !/TODO_APP_STATE/.test(txt)){ return {ok:true, isAssigned:true}; }
     if(txt.trim()){
-      data=parseMd(txt); localStorage.setItem(STORE,JSON.stringify(data));
+      // ohrani deljene (povezane) osebe, ki niso del to-do.md
+      const keep={}; Object.keys(assignLinks).forEach(n=>{ if(data.dodeljeno&&data.dodeljeno[n]) keep[n]=data.dodeljeno[n]; });
+      data=parseMd(txt);
+      data.dodeljeno=data.dodeljeno||{}; Object.assign(data.dodeljeno,keep);
+      localStorage.setItem(STORE,JSON.stringify(data));
       const ev=parseEvents(txt); if(ev){ events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events)); }
     }
     return {ok:true, empty:!txt.trim()};
@@ -531,6 +537,7 @@ function openGhModal(){
     const beforeData=localStorage.getItem(STORE)||"{}", beforeEv=localStorage.getItem(EVSTORE)||"{}";
     const localHadTasks=taskCount(JSON.parse(beforeData))>0;
     const r=await ghLoad();
+    if(r.isAssigned){ gh=null; stat.style.color="#c0392b"; stat.textContent="Ta datoteka je DELJENI seznam (assigned.md). Glavna sinhronizacija mora kazati na tvoj to-do.md. Za sodelavčev seznam uporabi pri osebi gumb 🔗 deli."; return; }
     if(!r.ok){ stat.style.color="#c0392b"; stat.textContent="Napaka "+r.status+" — preveri owner/repo/žeton in dovoljenja."; return; }
     localStorage.setItem(GH_CFG,JSON.stringify(gh));
     const fileHasData = taskCount(data)>0 || Object.keys(events).length>0;
@@ -561,7 +568,7 @@ document.getElementById("ghPill").onclick=openGhModal;
 /* ====================================================================== */
 const ALINKS="todo_assign_links_v1";
 let assignLinks = JSON.parse(localStorage.getItem(ALINKS) || "{}"); // { name: {owner,repo,branch,path,token} }
-let assignSha={}, lastAssignPush={}, assignTimer=null;
+let assignSha={}, lastAssignPush={}, assignTimer=null, assignLoaded={};
 
 function ghContentsGet(cfg){
   const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/")+"?ref="+(cfg.branch||"main");
@@ -590,15 +597,26 @@ async function fetchAssigned(name){
   const cfg=assignLinks[name]; if(!cfg) return;
   try{
     const r=await ghContentsGet(cfg);
-    if(r.status===200){ const j=await r.json(); assignSha[name]=j.sha; data.dodeljeno[name]=parseAssignedText(b64decode(j.content)); lastAssignPush[name]=serializeAssigned(name); }
-    else if(r.status===404){ assignSha[name]=null; data.dodeljeno[name]=data.dodeljeno[name]||[]; }
+    if(r.status===200){
+      const j=await r.json(); const txt=b64decode(j.content);
+      if(/TODO_APP_STATE/.test(txt)){ return; } // napačna datoteka (glavna to-do lista) — ne uvažaj
+      assignSha[name]=j.sha; data.dodeljeno[name]=parseAssignedText(txt); lastAssignPush[name]=serializeAssigned(name); assignLoaded[name]=true;
+    }
+    else if(r.status===404){ assignSha[name]=null; data.dodeljeno[name]=data.dodeljeno[name]||[]; assignLoaded[name]=true; }
   }catch(e){}
 }
 async function pushAssigned(name){
   const cfg=assignLinks[name]; if(!cfg) return;
+  if(!assignLoaded[name]) return; // varovalka: ne piši, dokler nismo uspešno naložili trenutnega stanja
   const content=serializeAssigned(name);
   if(lastAssignPush[name]===content) return;
+  const nTasks=(data.dodeljeno[name]||[]).length;
   try{
+    // varovalka proti izgubi: praznega seznama ne zapiši čez neprazno oddaljeno datoteko
+    if(nTasks===0){
+      const g=await ghContentsGet(cfg);
+      if(g.status===200){ const rt=b64decode((await g.json()).content); if(parseAssignedText(rt).length>0){ return; } }
+    }
     let r=await ghContentsPut(cfg,content,assignSha[name]);
     if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
     if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; }
@@ -641,6 +659,7 @@ function openAssignLinkModal(name){
     const localTasks=(data.dodeljeno[name]||[]).slice();
     const r=await ghContentsGet(cfg);
     if(!r.ok && r.status!==404){ delete assignLinks[name]; stat.style.color="#c0392b"; stat.textContent="Napaka "+r.status+" — preveri podatke in dovoljenja."; return; }
+    if(r.status===200){ const txt=b64decode((await r.json()).content); if(/TODO_APP_STATE/.test(txt)){ delete assignLinks[name]; stat.style.color="#c0392b"; stat.textContent="Ta datoteka je glavna to-do lista, ne deljeni seznam. Uporabi datoteko assigned.md."; return; } }
     localStorage.setItem(ALINKS,JSON.stringify(assignLinks));
     await fetchAssigned(name);
     // če je v shrambi prazno, lokalne naloge naložimo gor
@@ -824,8 +843,13 @@ function renderAssigned(){
 }
 function removePerson(name){
   const has=(data.dodeljeno[name]||[]).length;
-  if(has && !confirm("Odstranim osebo \""+name+"\" in njenih "+has+" nalog?")) return;
-  delete data.dodeljeno[name]; save(); render();
+  const shared=!!assignLinks[name];
+  const msg=shared ? "Odstranim osebo \""+name+"\"? To NE izbriše deljene shrambe, le prekine povezavo na tej napravi."
+                   : (has ? "Odstranim osebo \""+name+"\" in njenih "+has+" nalog?" : null);
+  if(msg && !confirm(msg)) return;
+  delete data.dodeljeno[name];
+  if(assignLinks[name]){ delete assignLinks[name]; localStorage.setItem(ALINKS,JSON.stringify(assignLinks)); delete assignSha[name]; delete lastAssignPush[name]; delete assignLoaded[name]; }
+  save(); render();
 }
 function renamePerson(name){
   const nn=prompt("Novo ime osebe:",name); if(nn==null) return;
@@ -940,7 +964,10 @@ restoreHandle();
 // GitHub: če je naprava že povezana, naloži najnovejše stanje z GitHub
 if(ghConfigured()){
   ghStatus(true,"povezujem z GitHub…");
-  ghLoad().then(r=>{ if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); } });
+  ghLoad().then(r=>{
+    if(r&&r.isAssigned){ gh=null; localStorage.removeItem(GH_CFG); ghStatus(false,"Glavna sinhronizacija je bila napačno nastavljena na deljeni seznam — odklopljeno. Poveži jo na svoj to-do.md."); render(); return; }
+    if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); }
+  });
 }
 // naloži deljene (povezane) osebe iz njihovih shramb
 loadAllAssigned();
