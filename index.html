@@ -254,8 +254,18 @@ function linkify(el,text){
 function dayArr(list,key){ data[list]=data[list]||{}; data[list][key]=data[list][key]||[]; return data[list][key]; }
 
 /* ---------- shranjevanje: localStorage + (če povezano) datoteka ---------- */
-function save(){ localStorage.setItem(STORE, JSON.stringify(data)); scheduleFileWrite(); scheduleGitWrite(); scheduleAssignPush(); }
-function evSave(){ localStorage.setItem(EVSTORE, JSON.stringify(events)); scheduleFileWrite(); scheduleGitWrite(); }
+/* DIRTY zastavica: beleži, da imamo lokalno spremembo, ki morda še ni prišla na GitHub
+   (npr. če uporabnik takoj po kljukanju osveži/zapre stran, preden se izteče odlog za pošiljanje).
+   Ob naslednjem zagonu aplikacije najprej pošljemo te spremembe na GitHub, šele nato beremo z GitHub —
+   da starejše stanje na GitHubu ne prepiše novejših lokalnih sprememb. */
+const DIRTY_KEY="todo_dirty_v1";
+const ADIRTY_KEY="todo_assign_dirty_v1";
+function markDirty(){ localStorage.setItem(DIRTY_KEY, String(Date.now())); }
+function clearDirty(){ localStorage.removeItem(DIRTY_KEY); }
+function markAssignDirty(name){ const o=JSON.parse(localStorage.getItem(ADIRTY_KEY)||"{}"); o[name]=Date.now(); localStorage.setItem(ADIRTY_KEY,JSON.stringify(o)); }
+function clearAssignDirty(name){ const o=JSON.parse(localStorage.getItem(ADIRTY_KEY)||"{}"); delete o[name]; localStorage.setItem(ADIRTY_KEY,JSON.stringify(o)); }
+function save(){ localStorage.setItem(STORE, JSON.stringify(data)); markDirty(); Object.keys(assignLinks||{}).forEach(markAssignDirty); scheduleFileWrite(); scheduleGitWrite(); scheduleAssignPush(); }
+function evSave(){ localStorage.setItem(EVSTORE, JSON.stringify(events)); markDirty(); scheduleFileWrite(); scheduleGitWrite(); }
 
 /* ====================================================================== */
 /*  SINHRONIZACIJA Z ENO DATOTEKO  to-do.md                               */
@@ -494,14 +504,14 @@ async function ghPush(){
   try{
     const body={message:"todo update "+new Date().toISOString(), content:b64encode(serializeMd()), branch:(gh.branch||"main")};
     if(ghSha) body.sha=ghSha;
-    let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body)});
-    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body)}); } }
-    if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
-    else { ghStatus(true,"napaka pri shranjevanju na GitHub ("+res.status+")"); }
-  }catch(e){ ghStatus(true,"GitHub ni dosegljiv (preveri povezavo)"); }
+    let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body),keepalive:true});
+    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body),keepalive:true}); } }
+    if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; clearDirty(); ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
+    else { ghStatus(true,"napaka pri shranjevanju na GitHub ("+res.status+") — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
+  }catch(e){ ghStatus(true,"GitHub ni dosegljiv (preveri povezavo) — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
   finally{ ghBusy=false; }
 }
-function scheduleGitWrite(){ if(!ghConfigured()) return; clearTimeout(ghTimer); ghTimer=setTimeout(ghPush,800); }
+function scheduleGitWrite(){ if(!ghConfigured()) return; clearTimeout(ghTimer); ghTimer=setTimeout(ghPush,400); }
 
 function openGhModal(){
   const bg=document.createElement("div"); bg.className="gh-modal-bg";
@@ -578,7 +588,7 @@ function ghContentsPut(cfg,contentStr,sha){
   const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/");
   const body={message:"assigned update "+new Date().toISOString(),content:b64encode(contentStr),branch:(cfg.branch||"main")};
   if(sha) body.sha=sha;
-  return fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},body:JSON.stringify(body)});
+  return fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},body:JSON.stringify(body),keepalive:true});
 }
 function serializeAssigned(name){
   const tasks=(data.dodeljeno[name]||[]).map(t=>({id:t.id,txt:t.txt,prio:t.prio,done:!!t.done}));
@@ -609,7 +619,7 @@ async function pushAssigned(name){
   const cfg=assignLinks[name]; if(!cfg) return;
   if(!assignLoaded[name]) return; // varovalka: ne piši, dokler nismo uspešno naložili trenutnega stanja
   const content=serializeAssigned(name);
-  if(lastAssignPush[name]===content) return;
+  if(lastAssignPush[name]===content){ clearAssignDirty(name); return; }
   const nTasks=(data.dodeljeno[name]||[]).length;
   try{
     // varovalka proti izgubi: praznega seznama ne zapiši čez neprazno oddaljeno datoteko
@@ -619,7 +629,7 @@ async function pushAssigned(name){
     }
     let r=await ghContentsPut(cfg,content,assignSha[name]);
     if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
-    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; }
+    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; clearAssignDirty(name); }
   }catch(e){}
 }
 function scheduleAssignPush(){
@@ -961,16 +971,41 @@ if(!/\.github\.io$/i.test(location.hostname)){
 
 render();
 restoreHandle();
-// GitHub: če je naprava že povezana, naloži najnovejše stanje z GitHub
-if(ghConfigured()){
-  ghStatus(true,"povezujem z GitHub…");
-  ghLoad().then(r=>{
+
+/* Zagon: NAJPREJ pošlji morebitne lokalne spremembe, ki morda niso uspele priti na GitHub
+   (npr. če je bila stran zaprta/osvežena prehitro po kljukanju, preden se je iztekel odlog za pošiljanje),
+   ŠELE NATO preberi stanje z GitHub. Tako starejše stanje na GitHubu nikoli ne prepiše novejših lokalnih
+   sprememb — to je bil vzrok, da so se opravila po osvežitvi strani vračala v staro stanje. */
+async function startupSync(){
+  if(ghConfigured()){
+    ghStatus(true,"povezujem z GitHub…");
+    if(localStorage.getItem(DIRTY_KEY)){
+      ghStatus(true,"pošiljam neshranjene spremembe na GitHub…");
+      await ghPush();
+    }
+    const r=await ghLoad();
     if(r&&r.isAssigned){ gh=null; localStorage.removeItem(GH_CFG); ghStatus(false,"Glavna sinhronizacija je bila napačno nastavljena na deljeni seznam — odklopljeno. Poveži jo na svoj to-do.md."); render(); return; }
     if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); }
-  });
+  }
+  // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži
+  const adirty=JSON.parse(localStorage.getItem(ADIRTY_KEY)||"{}");
+  const names=Object.keys(assignLinks);
+  await Promise.all(names.map(n=> adirty[n] ? pushAssigned(n) : Promise.resolve()));
+  loadAllAssigned();
 }
-// naloži deljene (povezane) osebe iz njihovih shramb
-loadAllAssigned();
+startupSync();
+
+/* Varovalka ob zapiranju/osveževanju/preklopu zavihka: če je odlog za pošiljanje še aktiven,
+   pošlji takoj (keepalive fetch zna preživeti tudi navigacijo stran s strani). */
+function flushPending(){
+  try{
+    if(ghTimer){ clearTimeout(ghTimer); ghTimer=null; if(ghConfigured()) ghPush(); }
+    if(writeTimer){ clearTimeout(writeTimer); writeTimer=null; if(fileHandle) writeFileNow(); }
+    if(assignTimer){ clearTimeout(assignTimer); assignTimer=null; Object.keys(assignLinks).forEach(n=>pushAssigned(n)); }
+  }catch(e){}
+}
+window.addEventListener("pagehide",flushPending);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") flushPending(); });
 </script>
 </body>
 </html>
