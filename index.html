@@ -47,6 +47,9 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .longhead { margin-top: 20px; }
 .day.longrow .daylabel { background:#f1efe9; color:#6b6256; }
 .day.longrow .cell { background:#fcfbf8; }
+.urgenthead { margin-top: 20px; }
+.day.urgentrow .daylabel { background:#fdeceb; color:#8a2d24; }
+.day.urgentrow .cell { background:#fffaf9; }
 /* Dodeljeno (po osebah, čez oba stolpca) */
 .assignhead { font-weight:700; font-size:14px; color:#33415c; background:#e6ecfb; border-radius:8px; padding:6px 10px; margin:22px 0 8px; }
 .person { margin-bottom:10px; }
@@ -200,6 +203,12 @@ h1 { font-size: 20px; margin: 0 0 12px; }
     <div class="h-privat">🏠 Privat</div>
   </div>
   <div id="grid"></div>
+  <div class="colhead urgenthead">
+    <div></div>
+    <div class="h-delo">🔴 Nujno službeno</div>
+    <div class="h-privat">🔴 Nujno privat</div>
+  </div>
+  <div id="urgentgrid"></div>
   <div class="colhead longhead">
     <div></div>
     <div class="h-delo">💼 Dolgoročno službeno</div>
@@ -729,10 +738,10 @@ function cellEl(list,key){
     dot.onclick=(e)=>{ e.stopPropagation(); openPrioMenu(dot,t); };
     const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=t.done;
     cb.onchange=()=>{
-      if(key===LKEY && cb.checked){
-        // opravljeno dolgoročno opravilo premakni med današnja opravljena
+      if((key===LKEY||key===UKEY) && cb.checked){
+        // opravljeno dolgoročno/nujno opravilo premakni med današnja opravljena
         const today=fmtKey(new Date());
-        data[list][LKEY]=(data[list][LKEY]||[]).filter(x=>x.id!==t.id);
+        data[list][key]=(data[list][key]||[]).filter(x=>x.id!==t.id);
         t.done=true; dayArr(list,today).push(t);
         save(); render(); return;
       }
@@ -804,11 +813,23 @@ function render(){
     row.appendChild(cp);
     grid.appendChild(row);
   }
+  renderUrgent();
   renderLong();
   renderAssigned();
 }
 
 const LKEY="__long__";
+const UKEY="__urgent__";
+function renderUrgent(){
+  const ug=document.getElementById("urgentgrid"); ug.innerHTML="";
+  const row=document.createElement("div"); row.className="day urgentrow";
+  const lab=document.createElement("div"); lab.className="daylabel";
+  lab.innerHTML=`<div class="dn">Nujno</div>`;
+  row.appendChild(lab);
+  row.appendChild(cellEl("delo",UKEY));
+  row.appendChild(cellEl("privat",UKEY));
+  ug.appendChild(row);
+}
 function renderLong(){
   const lg=document.getElementById("longgrid"); lg.innerHTML="";
   const row=document.createElement("div"); row.className="day longrow";
