@@ -276,6 +276,14 @@ function clearAssignDirty(name){ const o=JSON.parse(localStorage.getItem(ADIRTY_
 function save(){ localStorage.setItem(STORE, JSON.stringify(data)); markDirty(); Object.keys(assignLinks||{}).forEach(markAssignDirty); scheduleFileWrite(); scheduleGitWrite(); scheduleAssignPush(); }
 function evSave(){ localStorage.setItem(EVSTORE, JSON.stringify(events)); markDirty(); scheduleFileWrite(); scheduleGitWrite(); }
 
+// Uredi imena oseb v razdelku "Dodeljeno": po abecedi, deljene (programsko povezane) osebe pa vedno na koncu.
+function sortedPersonNames(names){
+  const cmp=(a,b)=>a.localeCompare(b,"sl");
+  const plain=names.filter(n=>!assignLinks[n]).sort(cmp);
+  const linked=names.filter(n=>assignLinks[n]).sort(cmp);
+  return plain.concat(linked);
+}
+
 /* ====================================================================== */
 /*  SINHRONIZACIJA Z ENO DATOTEKO  to-do.md                               */
 /*  - človeku berljive sekcije (Delo/Privat) bere jutranji digest         */
@@ -306,7 +314,7 @@ function serializeMd(){
     return out+"\n";
   }
   function assignedSection(){
-    const m=data.dodeljeno||{}; const names=Object.keys(m);
+    const m=data.dodeljeno||{}; const names=sortedPersonNames(Object.keys(m));
     let out="## 👥 Dodeljeno (Assigned)\n\n";
     if(!names.length){ return out+"_(ni dodeljenih nalog)_\n\n"; }
     names.forEach(n=>{
@@ -846,7 +854,7 @@ function renderAssigned(){
   const head=document.createElement("div"); head.className="assignhead"; head.textContent="👥 Dodeljeno";
   wrap.appendChild(head);
   const people=data.dodeljeno||(data.dodeljeno={});
-  Object.keys(people).forEach(name=>{
+  sortedPersonNames(Object.keys(people)).forEach(name=>{
     const block=document.createElement("div"); block.className="person";
     const ph=document.createElement("div"); ph.className="personhead";
     const nm=document.createElement("span"); nm.className="pname"; nm.textContent=name; nm.title="Dvojni klik za preimenovanje";
