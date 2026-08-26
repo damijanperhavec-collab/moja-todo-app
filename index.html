@@ -595,7 +595,14 @@ document.getElementById("ghPill").onclick=openGhModal;
 /* ====================================================================== */
 const ALINKS="todo_assign_links_v1";
 let assignLinks = JSON.parse(localStorage.getItem(ALINKS) || "{}"); // { name: {owner,repo,branch,path,token} }
-let assignSha={}, lastAssignPush={}, assignTimer=null, assignLoaded={};
+// lastAssignPush hrani zadnjo VSEBINO, za katero VEMO, da se ujema z GitHub (po uspešnem branju ali pisanju).
+// Shranjeno je trajno (ne le v spominu), da lahko ob vsakem zagonu primerjamo trenutno lokalno stanje s tem,
+// kar je bilo nazadnje res sinhronizirano — če se razlikuje, pomeni, da obstaja lokalna sprememba, ki še ni
+// prišla na GitHub, in jo je treba najprej poslati, preden karkoli preberemo nazaj.
+const ALASTPUSH="todo_assign_lastpush_v1";
+function loadLastAssignPush(){ try{ return JSON.parse(localStorage.getItem(ALASTPUSH)||"{}"); }catch(e){ return {}; } }
+function saveLastAssignPushEntry(name,content){ const o=loadLastAssignPush(); o[name]=content; localStorage.setItem(ALASTPUSH,JSON.stringify(o)); }
+let assignSha={}, lastAssignPush=loadLastAssignPush(), assignTimer=null, assignLoaded={};
 
 function ghContentsGet(cfg){
   const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/")+"?ref="+(cfg.branch||"main");
@@ -627,7 +634,7 @@ async function fetchAssigned(name){
     if(r.status===200){
       const j=await r.json(); const txt=b64decode(j.content);
       if(/TODO_APP_STATE/.test(txt)){ return; } // napačna datoteka (glavna to-do lista) — ne uvažaj
-      assignSha[name]=j.sha; data.dodeljeno[name]=parseAssignedText(txt); lastAssignPush[name]=serializeAssigned(name); assignLoaded[name]=true;
+      assignSha[name]=j.sha; data.dodeljeno[name]=parseAssignedText(txt); lastAssignPush[name]=serializeAssigned(name); saveLastAssignPushEntry(name,lastAssignPush[name]); assignLoaded[name]=true;
     }
     else if(r.status===404){ assignSha[name]=null; data.dodeljeno[name]=data.dodeljeno[name]||[]; assignLoaded[name]=true; }
   }catch(e){}
@@ -650,7 +657,7 @@ async function pushAssigned(name,force){
     }
     let r=await ghContentsPut(cfg,content,assignSha[name]);
     if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
-    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; clearAssignDirty(name); assignLoaded[name]=true; }
+    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; saveLastAssignPushEntry(name,content); clearAssignDirty(name); assignLoaded[name]=true; }
   }catch(e){}
 }
 function scheduleAssignPush(){
@@ -1020,11 +1027,15 @@ async function startupSync(){
     if(r&&r.isAssigned){ gh=null; localStorage.removeItem(GH_CFG); ghStatus(false,"Glavna sinhronizacija je bila napačno nastavljena na deljeni seznam — odklopljeno. Poveži jo na svoj to-do.md."); render(); return; }
     if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); }
   }
-  // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži
-  // (force=true, ker se assignLoaded ob vsakem zagonu ponastavi — glej pojasnilo pri pushAssigned)
-  const adirty=JSON.parse(localStorage.getItem(ADIRTY_KEY)||"{}");
+  // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži.
+  // Primerjamo trenutno lokalno vsebino s tem, kar smo nazadnje ZARES potrdili kot sinhronizirano
+  // (trajno shranjeno v ALASTPUSH) — to zazna tudi spremembe, ki so bile narejene, preden je bil
+  // ta popravek uveden (ne zanašamo se le na todo_assign_dirty_v1 zastavico).
   const names=Object.keys(assignLinks);
-  await Promise.all(names.map(n=> adirty[n] ? pushAssigned(n,true) : Promise.resolve()));
+  await Promise.all(names.map(async n=>{
+    const localContent=serializeAssigned(n);
+    if(lastAssignPush[n]!==localContent){ await pushAssigned(n,true); }
+  }));
   loadAllAssigned();
 }
 startupSync();
