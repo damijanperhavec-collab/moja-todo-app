@@ -494,7 +494,10 @@ function b64decode(b64){ const bin=atob((b64||"").replace(/\s/g,"")); const byte
 function ghUrl(){ const p=(gh.path||"to-do.md").split("/").map(encodeURIComponent).join("/"); return `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/${p}`; }
 function ghHeaders(){ return {Authorization:"Bearer "+gh.token, Accept:"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28"}; }
 async function ghGet(){
-  const res=await fetch(ghUrl()+"?ref="+(gh.branch||"main"),{headers:ghHeaders()});
+  // cache:"no-store" + edinstven "_" parameter preprečita, da bi brskalnik ali GitHubov CDN
+  // vrnil predpomnjen (zastarel) odgovor tik po pisanju — brez tega se je za nekaj sekund
+  // po zapisu včasih prebralo staro vsebino.
+  const res=await fetch(ghUrl()+"?ref="+(gh.branch||"main")+"&_="+Date.now(),{headers:ghHeaders(),cache:"no-store"});
   return res;
 }
 async function ghLoad(){
@@ -605,8 +608,10 @@ function saveLastAssignPushEntry(name,content){ const o=loadLastAssignPush(); o[
 let assignSha={}, lastAssignPush=loadLastAssignPush(), assignTimer=null, assignLoaded={};
 
 function ghContentsGet(cfg){
-  const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/")+"?ref="+(cfg.branch||"main");
-  return fetch(url,{headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}});
+  // gl. pojasnilo pri ghGet(): brez cache-busting parametra in cache:"no-store" se je znalo
+  // za nekaj sekund po zapisu prebrati staro (predpomnjeno) vsebino deljene datoteke.
+  const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/")+"?ref="+(cfg.branch||"main")+"&_="+Date.now();
+  return fetch(url,{headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},cache:"no-store"});
 }
 function ghContentsPut(cfg,contentStr,sha){
   const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/");
