@@ -632,9 +632,13 @@ async function fetchAssigned(name){
     else if(r.status===404){ assignSha[name]=null; data.dodeljeno[name]=data.dodeljeno[name]||[]; assignLoaded[name]=true; }
   }catch(e){}
 }
-async function pushAssigned(name){
+async function pushAssigned(name,force){
   const cfg=assignLinks[name]; if(!cfg) return;
-  if(!assignLoaded[name]) return; // varovalka: ne piši, dokler nismo uspešno naložili trenutnega stanja
+  // varovalka: ne piši, dokler nismo uspešno naložili trenutnega stanja — RAZEN ob zagonu (force),
+  // ko gre za pošiljanje lokalnih sprememb iz prejšnje seje, ki morda niso uspele priti na GitHub
+  // (assignLoaded se ob vsakem osvežitvi strani ponastavi na false, zato bi ta varovalka sicer
+  // vedno blokirala prav to pošiljanje in dovolila, da starejše stanje z GitHub prepiše novejše lokalno).
+  if(!assignLoaded[name] && !force) return;
   const content=serializeAssigned(name);
   if(lastAssignPush[name]===content){ clearAssignDirty(name); return; }
   const nTasks=(data.dodeljeno[name]||[]).length;
@@ -646,7 +650,7 @@ async function pushAssigned(name){
     }
     let r=await ghContentsPut(cfg,content,assignSha[name]);
     if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
-    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; clearAssignDirty(name); }
+    if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; clearAssignDirty(name); assignLoaded[name]=true; }
   }catch(e){}
 }
 function scheduleAssignPush(){
@@ -1017,9 +1021,10 @@ async function startupSync(){
     if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); }
   }
   // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži
+  // (force=true, ker se assignLoaded ob vsakem zagonu ponastavi — glej pojasnilo pri pushAssigned)
   const adirty=JSON.parse(localStorage.getItem(ADIRTY_KEY)||"{}");
   const names=Object.keys(assignLinks);
-  await Promise.all(names.map(n=> adirty[n] ? pushAssigned(n) : Promise.resolve()));
+  await Promise.all(names.map(n=> adirty[n] ? pushAssigned(n,true) : Promise.resolve()));
   loadAllAssigned();
 }
 startupSync();
@@ -1030,7 +1035,7 @@ function flushPending(){
   try{
     if(ghTimer){ clearTimeout(ghTimer); ghTimer=null; if(ghConfigured()) ghPush(); }
     if(writeTimer){ clearTimeout(writeTimer); writeTimer=null; if(fileHandle) writeFileNow(); }
-    if(assignTimer){ clearTimeout(assignTimer); assignTimer=null; Object.keys(assignLinks).forEach(n=>pushAssigned(n)); }
+    if(assignTimer){ clearTimeout(assignTimer); assignTimer=null; Object.keys(assignLinks).forEach(n=>pushAssigned(n,true)); }
   }catch(e){}
 }
 window.addEventListener("pagehide",flushPending);
