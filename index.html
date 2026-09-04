@@ -673,7 +673,12 @@ function scheduleAssignPush(){
 function loadAllAssigned(){
   const names=Object.keys(assignLinks);
   if(!names.length) return;
-  Promise.all(names.map(fetchAssigned)).then(()=>render());
+  // KLJUČNO: fetchAssigned() posodobi samo data v spominu, NE pa tudi glavne shrambe (STORE) na disku.
+  // Če tega ne bi shranili tudi na disk, bi naslednji zagon te iste naprave spet prebral STARO
+  // (nikoli posodobljeno) vsebino iz STORE, jo primerjal z medtem že pravilno posodobljenim ALASTPUSH
+  // in zaznal "razliko", ki je v resnici ni — ter zato spet po nepotrebnem (in škodljivo) poslal
+  // zastarele podatke na GitHub. To je bil pravi vzrok ponavljajočega se prepisovanja.
+  Promise.all(names.map(fetchAssigned)).then(()=>{ localStorage.setItem(STORE,JSON.stringify(data)); render(); });
 }
 function openAssignLinkModal(name){
   const bg=document.createElement("div"); bg.className="gh-modal-bg";
@@ -910,7 +915,19 @@ function renamePerson(name){
   const nn=prompt("Novo ime osebe:",name); if(nn==null) return;
   const v=nn.trim(); if(!v||v===name) return;
   if(data.dodeljeno[v]){ alert("Oseba s tem imenom že obstaja."); return; }
-  data.dodeljeno[v]=data.dodeljeno[name]; delete data.dodeljeno[name]; save(); render();
+  data.dodeljeno[v]=data.dodeljeno[name]; delete data.dodeljeno[name];
+  // Če je bila oseba deljena (povezana na GitHub), preimenuj tudi ključ v assignLinks in spremljajočih
+  // zemljevidih — sicer se lokalno prikaže pod novim imenom, sinhronizacija pa še vedno teče pod starim,
+  // kar prej ali slej pripelje do razcepljene identitete iste osebe med napravami.
+  if(assignLinks[name]){
+    assignLinks[v]=assignLinks[name]; delete assignLinks[name];
+    localStorage.setItem(ALINKS,JSON.stringify(assignLinks));
+    if(name in assignSha){ assignSha[v]=assignSha[name]; delete assignSha[name]; }
+    if(name in lastAssignPush){ lastAssignPush[v]=lastAssignPush[name]; delete lastAssignPush[name]; }
+    if(name in assignLoaded){ assignLoaded[v]=assignLoaded[name]; delete assignLoaded[name]; }
+    const lp=loadLastAssignPush(); if(name in lp){ lp[v]=lp[name]; delete lp[name]; localStorage.setItem(ALASTPUSH,JSON.stringify(lp)); }
+  }
+  save(); render();
 }
 
 function eventStrip(key){
@@ -1070,7 +1087,7 @@ function flushPending(){
   try{
     if(ghTimer){ clearTimeout(ghTimer); ghTimer=null; if(ghConfigured()) ghPush(); }
     if(writeTimer){ clearTimeout(writeTimer); writeTimer=null; if(fileHandle) writeFileNow(); }
-    if(assignTimer){ clearTimeout(assignTimer); assignTimer=null; Object.keys(assignLinks).forEach(n=>pushAssigned(n,true)); }
+    if(assignTimer){ clearTimeout(assignTimer); assignTimer=null; if(recentlySynced()) Object.keys(assignLinks).forEach(n=>pushAssigned(n,true)); }
   }catch(e){}
 }
 window.addEventListener("pagehide",flushPending);
