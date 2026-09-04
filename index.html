@@ -519,13 +519,19 @@ async function ghLoad(){
   if(res.status===404){ ghSha=null; return {ok:true, empty:true, missing:true}; }
   return {ok:false, status:res.status};
 }
+// Brskalniki (fetch keepalive) zavrnejo zahtevo, če je telo večje od ~64KB — za to velikost datoteko
+// pošljemo brez keepalive (kar je edino, kar tako ali tako deluje), sicer keepalive obdržimo kot
+// dodatno varovalko za primer zapiranja/osveževanja strani tik po shranjevanju.
+const KEEPALIVE_SAFE_BYTES=60000;
+function safeKeepalive(bodyStr){ return bodyStr.length<KEEPALIVE_SAFE_BYTES; }
 async function ghPush(){
   if(!ghConfigured()||ghBusy) return; ghBusy=true;
   try{
     const body={message:"todo update "+new Date().toISOString(), content:b64encode(serializeMd()), branch:(gh.branch||"main")};
     if(ghSha) body.sha=ghSha;
-    let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body),keepalive:true});
-    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:JSON.stringify(body),keepalive:true}); } }
+    let bodyStr=JSON.stringify(body);
+    let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:bodyStr,keepalive:safeKeepalive(bodyStr)});
+    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; bodyStr=JSON.stringify(body); res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:bodyStr,keepalive:safeKeepalive(bodyStr)}); } }
     if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; clearDirty(); ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
     else { ghStatus(true,"napaka pri shranjevanju na GitHub ("+res.status+") — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
   }catch(e){ ghStatus(true,"GitHub ni dosegljiv (preveri povezavo) — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
@@ -617,7 +623,8 @@ function ghContentsPut(cfg,contentStr,sha){
   const url="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+(cfg.path||"assigned.md").split("/").map(encodeURIComponent).join("/");
   const body={message:"assigned update "+new Date().toISOString(),content:b64encode(contentStr),branch:(cfg.branch||"main")};
   if(sha) body.sha=sha;
-  return fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},body:JSON.stringify(body),keepalive:true});
+  const bodyStr=JSON.stringify(body);
+  return fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+cfg.token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},body:bodyStr,keepalive:safeKeepalive(bodyStr)});
 }
 function serializeAssigned(name){
   const tasks=(data.dodeljeno[name]||[]).map(t=>({id:t.id,txt:t.txt,prio:t.prio,done:!!t.done}));
