@@ -500,6 +500,9 @@ async function ghGet(){
   const res=await fetch(ghUrl()+"?ref="+(gh.branch||"main")+"&_="+Date.now(),{headers:ghHeaders(),cache:"no-store"});
   return res;
 }
+// LASTMAIN_KEY hrani zadnjo VSEBINO to-do.md, za katero VEMO, da se ujema z GitHub (po uspešnem
+// branju ali pisanju) — enak princip kot ALASTPUSH pri deljenem razdelku "Dodeljeno".
+const LASTMAIN_KEY="todo_last_main_content_v1";
 async function ghLoad(){
   const res=await ghGet();
   if(res.status===200){
@@ -514,6 +517,7 @@ async function ghLoad(){
       localStorage.setItem(STORE,JSON.stringify(data));
       const ev=parseEvents(txt); if(ev){ events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events)); }
     }
+    localStorage.setItem(LASTMAIN_KEY,txt);
     return {ok:true, empty:!txt.trim()};
   }
   if(res.status===404){ ghSha=null; return {ok:true, empty:true, missing:true}; }
@@ -527,12 +531,34 @@ function safeKeepalive(bodyStr){ return bodyStr.length<KEEPALIVE_SAFE_BYTES; }
 async function ghPush(){
   if(!ghConfigured()||ghBusy) return; ghBusy=true;
   try{
-    const body={message:"todo update "+new Date().toISOString(), content:b64encode(serializeMd()), branch:(gh.branch||"main")};
+    // Najprej preveri trenutno stanje na GitHub. Če se je od našega zadnjega znanega branja/pisanja
+    // spremenilo (npr. ker je ta zavihek dolgo časa tiho visel odprt, druge naprave pa so medtem
+    // shranjevale), naše lokalno stanje ni zanesljivo novejše — namesto da ga na silo prepišemo čez,
+    // sprejmemo oddaljeno stanje (enak vzrok in popravek kot pri deljenem razdelku "Dodeljeno").
+    const g=await ghGet();
+    let remoteTxt=null;
+    if(g.status===200){ const gj=await g.json(); remoteTxt=b64decode(gj.content); ghSha=gj.sha; }
+    else if(g.status===404){ ghSha=null; }
+    const known=localStorage.getItem(LASTMAIN_KEY);
+    if(remoteTxt!==null && known!==null && remoteTxt!==known && !(/ASSIGNED_STATE/.test(remoteTxt) && !/TODO_APP_STATE/.test(remoteTxt))){
+      const keep={}; Object.keys(assignLinks).forEach(n=>{ if(data.dodeljeno&&data.dodeljeno[n]) keep[n]=data.dodeljeno[n]; });
+      data=parseMd(remoteTxt);
+      data.dodeljeno=data.dodeljeno||{}; Object.assign(data.dodeljeno,keep);
+      localStorage.setItem(STORE,JSON.stringify(data));
+      const ev=parseEvents(remoteTxt); if(ev){ events=ev; localStorage.setItem(EVSTORE,JSON.stringify(events)); }
+      localStorage.setItem(LASTMAIN_KEY,remoteTxt);
+      clearDirty();
+      ghStatus(true,"na GitHub so bile novejše spremembe iz druge naprave — prevzeto (ta zavihek ni pošiljal svojih zastarelih podatkov)");
+      render();
+      return;
+    }
+    const newContent=serializeMd();
+    const body={message:"todo update "+new Date().toISOString(), content:b64encode(newContent), branch:(gh.branch||"main")};
     if(ghSha) body.sha=ghSha;
     let bodyStr=JSON.stringify(body);
     let res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:bodyStr,keepalive:safeKeepalive(bodyStr)});
-    if(res.status===409||res.status===422){ const g=await ghGet(); if(g.status===200){ ghSha=(await g.json()).sha; body.sha=ghSha; bodyStr=JSON.stringify(body); res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:bodyStr,keepalive:safeKeepalive(bodyStr)}); } }
-    if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; clearDirty(); ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
+    if(res.status===409||res.status===422){ const g2=await ghGet(); if(g2.status===200){ ghSha=(await g2.json()).sha; body.sha=ghSha; bodyStr=JSON.stringify(body); res=await fetch(ghUrl(),{method:"PUT",headers:ghHeaders(),body:bodyStr,keepalive:safeKeepalive(bodyStr)}); } }
+    if(res.ok){ const j=await res.json(); ghSha=j.content&&j.content.sha; localStorage.setItem(LASTMAIN_KEY,newContent); clearDirty(); ghStatus(true,"shranjeno na GitHub ob "+nowTime()); }
     else { ghStatus(true,"napaka pri shranjevanju na GitHub ("+res.status+") — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
   }catch(e){ ghStatus(true,"GitHub ni dosegljiv (preveri povezavo) — sprememba ostaja shranjena lokalno, poskusil bom znova"); }
   finally{ ghBusy=false; }
@@ -662,13 +688,32 @@ async function pushAssigned(name,force){
   if(lastAssignPush[name]===content){ clearAssignDirty(name); return; }
   const nTasks=(data.dodeljeno[name]||[]).length;
   try{
-    // varovalka proti izgubi: praznega seznama ne zapiši čez neprazno oddaljeno datoteko
-    if(nTasks===0){
-      const g=await ghContentsGet(cfg);
-      if(g.status===200){ const rt=b64decode((await g.json()).content); if(parseAssignedText(rt).length>0){ return; } }
+    // Najprej preberi trenutno oddaljeno stanje.
+    const g=await ghContentsGet(cfg);
+    let remoteTxt=null;
+    if(g.status===200){ const gj=await g.json(); remoteTxt=b64decode(gj.content); assignSha[name]=gj.sha; }
+    else if(g.status===404){ assignSha[name]=null; }
+    // VAROVALKA proti zastarelemu zavihku: če se je oddaljena vsebina spremenila odkar smo jo
+    // nazadnje poznali (lastAssignPush), naša lokalna kopija ni zanesljivo novejša — gre lahko za
+    // zavihek/brskalnik (npr. Opera), ki je tiho visel odprt ure ali dni, medtem ko je druga naprava
+    // dejansko urejala skupni seznam. V tem primeru NE prepišemo oddaljenega s svojim starim posnetkom,
+    // temveč sprejmemo oddaljeno stanje kot pravilno (isti vzrok kot ponavljajoče se povoženje Nastjinega
+    // seznama: star lokalni "force" zapis na osvežitev/zaprtje zavihka je vsakič znova prepisal sveže
+    // podatke s starimi).
+    if(remoteTxt!==null && lastAssignPush[name]!==undefined && remoteTxt!==lastAssignPush[name]){
+      if(!/TODO_APP_STATE/.test(remoteTxt)){
+        data.dodeljeno[name]=parseAssignedText(remoteTxt);
+        lastAssignPush[name]=remoteTxt; saveLastAssignPushEntry(name,remoteTxt);
+        clearAssignDirty(name); assignLoaded[name]=true;
+        localStorage.setItem(STORE,JSON.stringify(data));
+        render();
+      }
+      return;
     }
+    // varovalka proti izgubi: praznega seznama ne zapiši čez neprazno oddaljeno datoteko
+    if(nTasks===0 && remoteTxt!==null && parseAssignedText(remoteTxt).length>0){ return; }
     let r=await ghContentsPut(cfg,content,assignSha[name]);
-    if(r.status===409||r.status===422){ const g=await ghContentsGet(cfg); if(g.status===200){ assignSha[name]=(await g.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
+    if(r.status===409||r.status===422){ const g2=await ghContentsGet(cfg); if(g2.status===200){ assignSha[name]=(await g2.json()).sha; r=await ghContentsPut(cfg,content,assignSha[name]); } }
     if(r.ok){ const j=await r.json(); assignSha[name]=j.content&&j.content.sha; lastAssignPush[name]=content; saveLastAssignPushEntry(name,content); clearAssignDirty(name); assignLoaded[name]=true; }
   }catch(e){}
 }
