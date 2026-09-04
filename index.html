@@ -1020,28 +1020,47 @@ restoreHandle();
 /* Zagon: NAJPREJ pošlji morebitne lokalne spremembe, ki morda niso uspele priti na GitHub
    (npr. če je bila stran zaprta/osvežena prehitro po kljukanju, preden se je iztekel odlog za pošiljanje),
    ŠELE NATO preberi stanje z GitHub. Tako starejše stanje na GitHubu nikoli ne prepiše novejših lokalnih
-   sprememb — to je bil vzrok, da so se opravila po osvežitvi strani vračala v staro stanje. */
+   sprememb — to je bil vzrok, da so se opravila po osvežitvi strani vračala v staro stanje.
+
+   POMEMBNA VAROVALKA (naprava, ki dolgo ni bila usklajena — npr. redko uporabljen brskalnik):
+   če ta naprava dalj časa ni uspešno naložila stanja z GitHub, njenemu lokalnemu stanju NE zaupamo
+   samodejno kot "novejšemu" — namesto pošiljanja najprej samo preberemo z GitHub. Brez tega bi lahko
+   staro, pozabljeno okno/brskalnik (ki je nazadnje sinhroniziral pred dnevi/tedni) ob odprtju povozilo
+   sveže podatke z drugih naprav zgolj zato, ker se njegova stara lokalna vsebina razlikuje od GitHub. */
+const LAST_SYNC_KEY="todo_last_full_sync_v1";
+const RECENT_SYNC_MS=24*60*60*1000; // 24h — če naprava dlje ni bila usklajena, ji ne zaupamo samodejno
+function recentlySynced(){
+  const ts=Number(localStorage.getItem(LAST_SYNC_KEY)||0);
+  return ts>0 && (Date.now()-ts)<RECENT_SYNC_MS;
+}
 async function startupSync(){
+  const trustLocal=recentlySynced();
   if(ghConfigured()){
     ghStatus(true,"povezujem z GitHub…");
-    if(localStorage.getItem(DIRTY_KEY)){
+    if(trustLocal && localStorage.getItem(DIRTY_KEY)){
       ghStatus(true,"pošiljam neshranjene spremembe na GitHub…");
       await ghPush();
+    } else if(!trustLocal && localStorage.getItem(DIRTY_KEY)){
+      ghStatus(true,"ta naprava dolgo ni bila usklajena — najprej berem z GitHub…");
     }
     const r=await ghLoad();
     if(r&&r.isAssigned){ gh=null; localStorage.removeItem(GH_CFG); ghStatus(false,"Glavna sinhronizacija je bila napačno nastavljena na deljeni seznam — odklopljeno. Poveži jo na svoj to-do.md."); render(); return; }
     if(r&&r.ok){ ghStatus(true,"povezano z GitHub"); render(); } else { ghStatus(false,"GitHub: napaka pri nalaganju"); }
   }
-  // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži.
+  // deljene (povezane) osebe: najprej pošlji morebitne neshranjene spremembe, šele nato naloži —
+  // toda samo, če je bila TA naprava pred kratkim uspešno usklajena (glej pojasnilo zgoraj).
   // Primerjamo trenutno lokalno vsebino s tem, kar smo nazadnje ZARES potrdili kot sinhronizirano
   // (trajno shranjeno v ALASTPUSH) — to zazna tudi spremembe, ki so bile narejene, preden je bil
   // ta popravek uveden (ne zanašamo se le na todo_assign_dirty_v1 zastavico).
-  const names=Object.keys(assignLinks);
-  await Promise.all(names.map(async n=>{
-    const localContent=serializeAssigned(n);
-    if(lastAssignPush[n]!==localContent){ await pushAssigned(n,true); }
-  }));
+  if(trustLocal){
+    const names=Object.keys(assignLinks);
+    await Promise.all(names.map(async n=>{
+      const localContent=serializeAssigned(n);
+      if(lastAssignPush[n]!==localContent){ await pushAssigned(n,true); }
+    }));
+  }
   loadAllAssigned();
+  localStorage.setItem(LAST_SYNC_KEY,String(Date.now()));
 }
 startupSync();
 
