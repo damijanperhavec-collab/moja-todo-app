@@ -71,7 +71,7 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 }
 .task:hover { background: #f6f6f4; }
 .task .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.dot.h { background: #e2483d; } .dot.m { background: #e0922f; } .dot.l { background: #4caf50; }
+.dot.p1 { background: #c0392b; } .dot.p2 { background: #e2483d; } .dot.p3 { background: #e67e22; } .dot.p4 { background: #e0922f; } .dot.p5 { background: #a3c93a; } .dot.p6 { background: #4caf50; }
 .task input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; flex:none; }
 .task .txt { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
 .task.done .txt { text-decoration: line-through; color: #bbb; }
@@ -98,7 +98,7 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .priomenu button:hover { background:#f2f4fb; }
 .priomenu button .pdot { width:11px; height:11px; border-radius:50%; flex:none; }
 .priomenu button.sel { font-weight:700; }
-.priomenu .pdot.h { background:#e2483d; } .priomenu .pdot.m { background:#e0922f; } .priomenu .pdot.l { background:#4caf50; }
+.priomenu .pdot.p1 { background:#c0392b; } .priomenu .pdot.p2 { background:#e2483d; } .priomenu .pdot.p3 { background:#e67e22; } .priomenu .pdot.p4 { background:#e0922f; } .priomenu .pdot.p5 { background:#a3c93a; } .priomenu .pdot.p6 { background:#4caf50; }
 .legend { font-size: 12px; color: #888; margin-top: 12px; }
 .legend .dot { display:inline-block; width:8px;height:8px;border-radius:50%;margin:0 3px 0 10px; }
 .task[draggable] { cursor: grab; }
@@ -216,21 +216,47 @@ h1 { font-size: 20px; margin: 0 0 12px; }
   </div>
   <div id="longgrid"></div>
   <div id="assignwrap"></div>
-  <div class="legend">Prioriteta:
-    <span class="dot h"></span>visoka
-    <span class="dot m"></span>srednja
-    <span class="dot l"></span>nizka
-  </div>
+  <div class="legend" id="legend">Prioriteta:</div>
 </div>
 
 <script>
+/* ---------- 6-stopenjska prioriteta (p1 najvišja … p6 najnižja) ----------
+   Stara shema (h/m/l = visoka/srednja/nizka) se samodejno preslika na p2/p4/p6,
+   da obstoječi podatki (in stare markdown datoteke z (V)/(S)/(N)) ostanejo pravilni;
+   p1/p3/p5 so nove vmesne stopnje. */
+const PRIOS = [
+  {code:"p1", label:"Kritično",       short:"1", color:"#c0392b"},
+  {code:"p2", label:"Visoka",         short:"2", color:"#e2483d"},
+  {code:"p3", label:"Srednje visoka", short:"3", color:"#e67e22"},
+  {code:"p4", label:"Srednja",        short:"4", color:"#e0922f"},
+  {code:"p5", label:"Nizko srednja",  short:"5", color:"#a3c93a"},
+  {code:"p6", label:"Nizka",          short:"6", color:"#4caf50"},
+];
+function migratePrio(p){
+  if(p==="h") return "p2";
+  if(p==="m") return "p4";
+  if(p==="l") return "p6";
+  return (p && /^p[1-6]$/.test(p)) ? p : "p4";
+}
+function migrateState(d){
+  d=d||{};
+  ["delo","privat"].forEach(k=>{
+    const m=d[k]||{};
+    Object.keys(m).forEach(day=>{ (m[day]||[]).forEach(t=>{ t.prio=migratePrio(t.prio); }); });
+  });
+  const dd=d.dodeljeno||{};
+  Object.keys(dd).forEach(n=>{ (dd[n]||[]).forEach(t=>{ t.prio=migratePrio(t.prio); }); });
+  return d;
+}
+
 const STORE = "todo_app_v1";
 const EVSTORE = "todo_events_v1";
-let data = JSON.parse(localStorage.getItem(STORE) || "{}");
+let data = migrateState(JSON.parse(localStorage.getItem(STORE) || "{}"));
 let events = JSON.parse(localStorage.getItem(EVSTORE) || "{}"); // { "YYYY-MM-DD": [ {id,time,title} ] }
 let weekStart = startOfWeek(new Date());
 
-const prioOrder = {h:0,m:1,l:2};
+const prioOrder = {}; PRIOS.forEach((p,i)=>{ prioOrder[p.code]=i; });
+prioOrder.h=prioOrder.p2; prioOrder.m=prioOrder.p4; prioOrder.l=prioOrder.p6; // varovalka za nemigrirane podatke
 const fmtKey = d => { const p=n=>String(n).padStart(2,"0"); return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate()); };
 const dayNames = ["pon","tor","sre","čet","pet","sob","ned"];
 
@@ -289,15 +315,17 @@ function sortedPersonNames(names){
 /*  - človeku berljive sekcije (Delo/Privat) bere jutranji digest         */
 /*  - skrit blok <!-- TODO_APP_STATE ... --> hrani točno stanje aplikacije */
 /* ====================================================================== */
-const P2CODE={h:"V",m:"S",l:"N"};
-const CODE2P={V:"h",S:"m",N:"l"};
+const P2CODE={}; PRIOS.forEach(p=>{ P2CODE[p.code]=p.short; });
+P2CODE.h="2"; P2CODE.m="4"; P2CODE.l="6"; // varovalka za nemigrirane podatke
+const CODE2P={}; PRIOS.forEach(p=>{ CODE2P[p.short]=p.code; });
+CODE2P.V="p2"; CODE2P.S="p4"; CODE2P.N="p6"; // branje starih to-do.md datotek (pred 6-stopenjsko lestvico)
 
 function serializeMd(){
   const today=fmtKey(new Date());
   const head=
 "# Moja Todo Lista\n\n"+
 "> Kanonična datoteka. Jutranji digest ob 7:00 bere to datoteko.\n"+
-"> Prioriteta: (V) visoka / (S) srednja / (N) nizka. Opravljeno = [x].\n"+
+"> Prioriteta: (1) kritično / (2) visoka / (3) srednje visoka / (4) srednja / (5) nizko srednja / (6) nizka. Opravljeno = [x].\n"+
 "> Datoteko samodejno posodablja ToDo aplikacija (index.html).\n"+
 "> Zadnja sprememba: "+today+"\n\n";
   function section(title,list){
@@ -345,7 +373,7 @@ function parseEvents(text){
 function parseMd(text){
   // 1) prefer strojni blok
   const m=text.match(/<!--\s*TODO_APP_STATE\s*([\s\S]*?)\s*TODO_APP_STATE\s*-->/);
-  if(m){ try{ const obj=JSON.parse(m[1].trim()); if(obj&&typeof obj==="object") return obj; }catch(e){} }
+  if(m){ try{ const obj=JSON.parse(m[1].trim()); if(obj&&typeof obj==="object") return migrateState(obj); }catch(e){} }
   // 2) fallback: razčleni človeške vrstice (vse na današnji dan)
   const today=fmtKey(new Date());
   const d={delo:{},privat:{}};
@@ -354,7 +382,7 @@ function parseMd(text){
     if(/##/.test(line)&&/Delo/i.test(line)) cur="delo";
     else if(/##/.test(line)&&/Privat/i.test(line)) cur="privat";
     else {
-      const mm=line.match(/^- \[([ xX])\]\s*\(([VSN])\)\s*(.+?)\s*(?:\((\d{4}-\d{2}-\d{2})\))?\s*$/);
+      const mm=line.match(/^- \[([ xX])\]\s*\(([VSN1-6])\)\s*(.+?)\s*(?:\((\d{4}-\d{2}-\d{2})\))?\s*$/);
       if(mm&&cur){
         d[cur][today]=d[cur][today]||[];
         d[cur][today].push({id:Date.now()+Math.random(),txt:mm[3].trim(),prio:CODE2P[mm[2]],done:mm[1].toLowerCase()==="x",due:mm[4]||undefined});
@@ -654,7 +682,7 @@ function ghContentsPut(cfg,contentStr,sha){
 }
 function serializeAssigned(name){
   const tasks=(data.dodeljeno[name]||[]).map(t=>({id:t.id,txt:t.txt,prio:t.prio,done:!!t.done}));
-  let h="# Dodeljeno — "+name+"\n\n> Skupni seznam nalog. Urejata ga lastnik in "+name+" (živa dvosmerna sinhronizacija).\n> (V) visoka / (S) srednja / (N) nizka. Opravljeno = [x].\n\n";
+  let h="# Dodeljeno — "+name+"\n\n> Skupni seznam nalog. Urejata ga lastnik in "+name+" (živa dvosmerna sinhronizacija).\n> Prioriteta (1) kritično … (6) nizka. Opravljeno = [x].\n\n";
   const s=tasks.slice().sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]);
   if(!s.length) h+="_(ni nalog)_\n"; else s.forEach(t=>h+="- ["+(t.done?"x":" ")+"] ("+P2CODE[t.prio]+") "+t.txt+"\n");
   h+="\n<!-- ASSIGNED_STATE\n"+JSON.stringify({tasks})+"\nASSIGNED_STATE -->\n";
@@ -662,7 +690,7 @@ function serializeAssigned(name){
 }
 function parseAssignedText(text){
   const m=text.match(/<!--\s*ASSIGNED_STATE\s*([\s\S]*?)\s*ASSIGNED_STATE\s*-->/);
-  if(m){ try{ const o=JSON.parse(m[1].trim()); if(o&&Array.isArray(o.tasks)) return o.tasks; }catch(e){} }
+  if(m){ try{ const o=JSON.parse(m[1].trim()); if(o&&Array.isArray(o.tasks)) return o.tasks.map(t=>({...t,prio:migratePrio(t.prio)})); }catch(e){} }
   return [];
 }
 async function fetchAssigned(name){
@@ -783,7 +811,7 @@ function closePrioMenuOutside(e){ const m=document.getElementById("__priomenu");
 function openPrioMenu(anchor,t){
   closePrioMenu();
   const menu=document.createElement("div"); menu.className="priomenu"; menu.id="__priomenu";
-  [["h","Visoka"],["m","Srednja"],["l","Nizka"]].forEach(([p,label])=>{
+  PRIOS.forEach(({code:p,label})=>{
     const b=document.createElement("button"); if(t.prio===p) b.className="sel";
     b.innerHTML='<span class="pdot '+p+'"></span>'+label+(t.prio===p?' ✓':'');
     b.onclick=(ev)=>{ ev.stopPropagation(); closePrioMenu(); if(t.prio!==p){ t.prio=p; save(); render(); } };
@@ -846,7 +874,7 @@ function cellEl(list,key){
   });
   const f=document.createElement("div"); f.className="addmini";
   const inp=document.createElement("input"); inp.placeholder="+ opravilo";
-  const sel=document.createElement("select"); sel.innerHTML='<option value="h">V</option><option value="m" selected>S</option><option value="l">N</option>';
+  const sel=document.createElement("select"); sel.innerHTML=PRIOS.map(p=>'<option value="'+p.code+'"'+(p.code==="p4"?" selected":"")+'>'+p.short+'</option>').join("");
   const btn=document.createElement("button"); btn.textContent="+";
   const doAdd=()=>{ const v=inp.value.trim(); if(!v)return; dayArr(list,key).push({id:Date.now()+Math.random(),txt:v,prio:sel.value,done:false}); inp.value=""; save(); render(); };
   btn.onclick=doAdd; inp.addEventListener("keydown",e=>{if(e.key==="Enter")doAdd();});
@@ -1004,7 +1032,6 @@ document.getElementById("printBtn").onclick=()=>window.print();
 document.getElementById("exportBtn").onclick=showExportModal;
 
 /* ---------- Današnji pregled (digest predogled, nespremenjen) ---------- */
-const prioName={h:"visoka",m:"srednja",l:"nizka"};
 function openTasks(list,key){ return dayArr(list,key).filter(t=>!t.done).sort((a,b)=>prioOrder[a.prio]-prioOrder[b.prio]); }
 function taskLi(t){ return `<li><span class="dot ${t.prio}"></span><span>${t.txt.replace(/</g,"&lt;")}</span></li>`; }
 function secHtml(title,icon,tasks){
@@ -1022,7 +1049,7 @@ function renderDigest(){
   const delo=openOnDay("delo",key), privat=openOnDay("privat",key);
   const otherDelo=openExceptDay("delo",key), otherPrivat=openExceptDay("privat",key);
   const todayAll=[...delo,...privat];
-  const high=todayAll.filter(t=>t.prio==="h");
+  const high=todayAll.filter(t=>t.prio==="p1"||t.prio==="p2");
   const dateStr=new Date().toLocaleDateString("sl-SI",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
   const topHtml = high.length ? `<ul>${high.map(taskLi).join("")}</ul>` : `<div class="digest-empty">Danes ni opravil z visoko prioriteto.</div>`;
   const otherCount=otherDelo.length+otherPrivat.length;
@@ -1054,7 +1081,7 @@ function renderDigest(){
     window.addEventListener("afterprint",cleanup); window.print();
   };
 }
-function lineTasks(tasks){ return tasks.length ? tasks.map(t=>"  • ["+prioName[t.prio][0].toUpperCase()+"] "+t.txt).join("\n") : "  (ni opravil)"; }
+function lineTasks(tasks){ return tasks.length ? tasks.map(t=>"  • ["+P2CODE[t.prio]+"] "+t.txt).join("\n") : "  (ni opravil)"; }
 function buildDigestText(dateStr,high,delo,privat,otherDelo,otherPrivat){
   let s="JUTRANJI PREGLED — "+dateStr+"\n\n";
   s+="🎯 Najpomembnejše danes:\n"+lineTasks(high)+"\n\n";
@@ -1066,6 +1093,18 @@ function buildDigestText(dateStr,high,delo,privat,otherDelo,otherPrivat){
   return s;
 }
 document.getElementById("digestBtn").onclick=renderDigest;
+
+// Napolni legendo prioritet iz PRIOS (enotni vir resnice za barve/oznake).
+{
+  const lg=document.getElementById("legend");
+  if(lg){
+    PRIOS.forEach(p=>{
+      const dot=document.createElement("span"); dot.className="dot "+p.code;
+      lg.appendChild(dot);
+      lg.appendChild(document.createTextNode(p.short+" "+p.label+"  "));
+    });
+  }
+}
 
 // Primer dogodkov, da je prikaz viden, dokler iCloud vir (prek digesta) ni priklopljen.
 // Vsebujejo "(primer)" — jutranji digest take vrstice ignorira. Lahko jih odstraniš z ×.
