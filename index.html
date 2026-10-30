@@ -128,6 +128,16 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .gh-modal .ghactions .danger { background:#fbe7e6; color:#c0392b; }
 .gh-modal .ghactions .secondary { background:#efeff0; color:#444; }
 .gh-modal .ghstat { font-size:12px; margin-top:10px; min-height:16px; }
+.quickbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0 10px; }
+.quickbar .qlabel { font-size:12px; color:#888; margin-right:2px; }
+.quickbar button { border:1px solid #d7dbe6; background:#fff; border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer; color:#333; }
+.quickbar button:hover { background:#eef2ff; border-color:#6c8ef5; }
+.dg-body { font-size:14px; line-height:1.5; }
+.dg-body h1,.dg-body h2,.dg-body h3 { margin:14px 0 6px; font-size:15px; }
+.dg-body h1 { font-size:17px; }
+.dg-body ul { margin:4px 0 8px 18px; padding:0; }
+.dg-body p { margin:6px 0; }
+.dg-meta { color:#888; font-size:12px; margin-bottom:10px; }
 .digest-overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:50; overflow:auto; }
 .digest-card { background:#fff; border-radius:14px; max-width:560px; width:100%; padding:22px 24px; box-shadow:0 8px 30px rgba(0,0,0,.2); }
 .digest-card h2 { font-size:18px; margin:0 0 4px; }
@@ -144,7 +154,7 @@ h1 { font-size: 20px; margin: 0 0 12px; }
 .digest-actions .primary { background:#6c8ef5; color:#fff; }
 .digest-actions .secondary { background:#efeff0; color:#444; }
 @media print {
-  .digestbtn, .digest-overlay, .syncbar, .gh-modal-bg { display:none !important; }
+  .digestbtn, .digest-overlay, .syncbar, .gh-modal-bg, .quickbar { display:none !important; }
   body.print-digest > .wrap { display:none !important; }
   body.print-digest .digest-overlay { display:flex !important; position:static; background:#fff; padding:0; }
   body.print-digest .digest-card { box-shadow:none; max-width:none; }
@@ -196,6 +206,12 @@ h1 { font-size: 20px; margin: 0 0 12px; }
       <button id="exportBtn">📋 Izvozi</button>
       <button class="printbtn" id="printBtn">🖨 Natisni</button>
     </div>
+  </div>
+  <div class="quickbar" id="quickbar">
+    <span class="qlabel">Jutranji pregledi:</span>
+    <button data-dg="brief" title="Zadnji Morning brief">☀️ Morning brief</button>
+    <button data-dg="todo" title="Zadnji Morning todo digest">📋 Morning todo digest</button>
+    <button data-dg="email" title="Zadnji Morning email digest">✉️ Morning email digest</button>
   </div>
   <div class="colhead">
     <div></div>
@@ -1093,6 +1109,48 @@ function buildDigestText(dateStr,high,delo,privat,otherDelo,otherPrivat){
   return s;
 }
 document.getElementById("digestBtn").onclick=renderDigest;
+
+/* ---------- Bližnjice do jutranjih pregledov (digests/*.md iz GitHub repozitorija) ---------- */
+const DG_TITLES={brief:"☀️ Morning brief",todo:"📋 Morning todo digest",email:"✉️ Morning email digest"};
+function dgEsc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function dgInline(s){
+  s=dgEsc(s).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+  return s.replace(/(https?:\/\/[^\s<)]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+function dgMd(md){
+  const lines=md.split(/\r?\n/); let out="", inList=false;
+  const closeList=()=>{ if(inList){ out+="</ul>"; inList=false; } };
+  for(const raw of lines){
+    const l=raw.trimEnd();
+    let m;
+    if((m=l.match(/^(#{1,3})\s+(.*)$/))){ closeList(); out+="<h"+m[1].length+">"+dgInline(m[2])+"</h"+m[1].length+">"; }
+    else if((m=l.match(/^\s*[-*]\s+(.*)$/))){ if(!inList){ out+="<ul>"; inList=true; } out+="<li>"+dgInline(m[1])+"</li>"; }
+    else if(!l.trim()){ closeList(); }
+    else { closeList(); out+="<p>"+dgInline(l)+"</p>"; }
+  }
+  closeList(); return out;
+}
+async function openDigestFile(name){
+  const ov=document.createElement("div"); ov.className="digest-overlay";
+  ov.addEventListener("click",e=>{ if(e.target===ov) ov.remove(); });
+  ov.innerHTML=`<div class="digest-card"><h2>${DG_TITLES[name]||name}</h2><div class="dg-meta">Nalaganje …</div><div class="dg-body"></div>
+    <div class="digest-actions"><button class="secondary" data-act="close">Zapri</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-act="close"]').onclick=()=>ov.remove();
+  const meta=ov.querySelector(".dg-meta"), body=ov.querySelector(".dg-body");
+  if(!ghConfigured()){ meta.textContent="Najprej poveži GitHub (☁︎ GitHub sync), da lahko preberem pregled."; return; }
+  try{
+    const url="https://api.github.com/repos/"+gh.owner+"/"+gh.repo+"/contents/digests/"+encodeURIComponent(name)+".md?ref="+(gh.branch||"main")+"&_="+Date.now();
+    const res=await fetch(url,{headers:ghHeaders(),cache:"no-store"});
+    if(res.status===404){ meta.textContent="Pregled še ni pripravljen. Pripravi ga naslednji zagon sinhronizacije (todo-sync)."; return; }
+    if(!res.ok){ meta.textContent="Napaka pri branju (HTTP "+res.status+")."; return; }
+    const j=await res.json(); const txt=b64decode(j.content);
+    const m=txt.match(/^<!--\s*generated:\s*(.*?)\s*-->/);
+    meta.textContent = m ? "Pripravljeno: "+m[1] : "";
+    body.innerHTML=dgMd(txt.replace(/^<!--[\s\S]*?-->\s*/,""));
+  }catch(e){ meta.textContent="Napaka: "+e.message; }
+}
+document.querySelectorAll("#quickbar [data-dg]").forEach(b=>{ b.onclick=()=>openDigestFile(b.dataset.dg); });
 
 // Napolni legendo prioritet iz PRIOS (enotni vir resnice za barve/oznake).
 {
